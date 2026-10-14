@@ -1,0 +1,37 @@
+Git 指令指南
+在项目文件夹里敲: C:/Users/qi/Desktop/源码/我的项目
+
+【日常三条】
+git status              看改了哪些文件，随时敲，没副作用
+git add .               把项目里所有改动装进待提交清单，点前面必须有空格
+git commit -m "说明"     存档，生成一条记录，引号里写本次改了啥
+
+【看历史】
+git log --oneline       看存过哪些档，每行一笔：编号+说明，越上面越新
+git show 编号           看某一笔具体改了哪几行
+git checkout 编号       只看一眼旧版本，看完敲 git checkout master 回来
+git reset --hard 编号   真的退回去，之后的提交会从分支上消失，危险
+git reflog              救命稻草，reset 抹掉的提交也能在这找回编号
+
+【撤销】
+git restore 文件名        把文件恢复成上次提交的样子，你写的改动就没了
+git restore --staged .   只把文件从待提交清单拿出来，文件内容一点不动
+git diff                 看还没提交的改动，具体改了哪几行
+
+【概念】
+工作区(你编辑的文件) → git add → 暂存区(待提交清单) → git commit → 仓库历史(永久)
+add 不产生任何记录，只是"往清单里登记"，只有 commit 才真正存下一个版本
+提交单位是「文件」，记的是「路径 + 内容」
+add . 会扫描整个项目，但只加变了的文件，没变的不动
+.gitignore 排除的 (node_modules 等) 压根不扫
+
+【三个坑】
+.gitignore 不支持行尾注释，写 node_modules/ # 注释 会让整行失效，注释要单独占一行
+.gitignore 管不了"已经加进去的"，要先 git rm -r --cached . 清空再重新 add
+add 和 commit 之间要空格，git add. 和 git commit-m 都是错的
+
+【空文件夹】
+git 看不见空文件夹，clone 下来会没有它，要放个占位文件 (约定叫 .gitkeep)
+
+【什么时候提交】
+做完一件事提交一次，不是每改一个字
