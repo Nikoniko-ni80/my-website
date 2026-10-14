@@ -1,0 +1,6 @@
+# 我的博客项目
+
+一个用 FastAPI + Vue 3 写的技术社区网站。
+
+- 后端: Python / FastAPI / MySQL / Redis
+- 前端: Vue 3 / Vite
