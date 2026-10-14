@@ -1,0 +1,183 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ============================================================
+   兜底: 用户能输入的文本, 一律允许从【任意位置】断开
+   ============================================================
+   【为什么需要】
+     用户可能输入一长串没空格的字符 —— 长 URL、长英文单词、一长串数字。
+     浏览器默认【不会在单词中间断行】→ 那串东西直接把布局顶破,
+     横向溢出到屏幕外面去 (就是你测试时那条长评论)。
+
+   【为什么用 overflow-wrap: anywhere, 而不是 break-word】
+     break-word  只在"整行放不下"时才断, 而且【不参与 min-content 计算】。
+                 在 flex 布局里, 容器的"最小宽度"还是按最长单词算
+                 → 它还是不肯被压缩 → 还是会把 flex 容器顶破
+     anywhere    会参与 min-content 计算 → flex 容器能正确收缩 ✅
+
+   【为什么放全局】
+     这些 class 分散在 7 个组件的 <style scoped> 里。
+     与其每个都改一遍, 不如在这统一兜底 —— 以后新页面也能受益。
+     (⚠️ 但如果你新写了个 class 装用户文本, 记得加进下面这个列表)
+
+   【为什么不会误伤代码块】
+     .md-body 里的 <pre> 有 white-space: pre —— 那种情况下
+     overflow-wrap 是【不生效】的, 所以代码块该横向滚动还是横向滚动。
+   ============================================================ */
+.md-body,      /* 文章正文 */
+.title,        /* 文章详情页: 大标题 */
+.art-title,    /* 首页 / 收藏夹: 卡片标题 */
+.art-sum,      /* 首页: 卡片摘要 */
+.t,            /* 各种列表页: 条目标题 */
+.c-content,    /* 评论内容 */
+.ac-bio,       /* 文章页右侧: 作者简介 */
+.bio,          /* 个人主页: 简介 */
+.u-bio,        /* 关注/粉丝弹窗: 简介 */
+.f-name,       /* 侧栏: 用户名 */
+.author {      /* 卡片上的作者名 */
+  overflow-wrap: anywhere;
+  word-break: break-word;   /* 老浏览器兜底 */
+}
+
+body {
+  font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #1f2937;
+  -webkit-font-smoothing: antialiased;
+
+  /* 背景: 淡青色的"弥散色晕" (像粉末/水彩, 柔和过渡, 不是硬边色块) */
+  background-color: #fbfefe;
+  background-image:
+    radial-gradient(closest-side, rgba(153, 246, 228, 0.55), rgba(153, 246, 228, 0)),
+    radial-gradient(closest-side, rgba(167, 243, 208, 0.50), rgba(167, 243, 208, 0)),
+    radial-gradient(closest-side, rgba(199, 210, 254, 0.38), rgba(199, 210, 254, 0)),
+    radial-gradient(closest-side, rgba(217, 249, 157, 0.32), rgba(217, 249, 157, 0)),
+    radial-gradient(closest-side, rgba(204, 251, 241, 0.55), rgba(204, 251, 241, 0));
+  background-size:
+    70vw 70vh,
+    62vw 62vh,
+    52vw 52vh,
+    46vw 46vh,
+    80vw 80vh;
+  background-position:
+    10% 6%,
+    92% 16%,
+    78% 86%,
+    18% 92%,
+    50% -10%;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+:root {
+  --primary: #14b8a6;          /* 青绿主色 */
+  --primary-2: #2dd4bf;        /* 亮一点 */
+  --primary-soft: #ccfbf1;     /* 浅青底 */
+  --primary-light: #f0fdfa;    /* 极浅 */
+  --text-main: #1f2937;
+  --text-sub: #6b7280;
+  --card: #ffffff;
+  --radius: 16px;
+  --maxw: 1200px;
+}
+
+/* 页面内容区 */
+.page {
+  max-width: var(--maxw);
+  margin: 0 auto;
+  padding: 24px 24px 60px;
+  min-height: calc(100vh - 64px);
+}
+
+/* 卡片 */
+.card {
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 12px rgba(20, 184, 166, 0.07);
+}
+
+/* 悬停放大 (用于卡片) */
+.hoverable {
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1), box-shadow 0.22s;
+  cursor: pointer;
+}
+.hoverable:hover {
+  transform: translateY(-6px) scale(1.045);
+  box-shadow: 0 16px 36px rgba(20, 184, 166, 0.20);
+}
+
+/* 封面占位色块 (青绿系渐变, 明亮清新) */
+.cover-1 { background: linear-gradient(135deg, #a7f3d0 0%, #99f6e4 100%); }
+.cover-2 { background: linear-gradient(135deg, #bbf7d0 0%, #a5f3fc 100%); }
+.cover-3 { background: linear-gradient(135deg, #ccfbf1 0%, #a5b4fc 100%); }
+.cover-4 { background: linear-gradient(135deg, #d9f99d 0%, #99f6e4 100%); }
+.cover-5 { background: linear-gradient(135deg, #99f6e4 0%, #a7f3d0 100%); }
+.cover-6 { background: linear-gradient(135deg, #c7d2fe 0%, #99f6e4 100%); }
+
+/* ============================================================
+   Markdown 正文样式 (全局)
+   ------------------------------------------------------------
+   为什么放全局?
+     Markdown 渲染出来的 HTML 是【动态生成的】(v-html),
+     组件的 scoped 样式管不到它 (它没有 data-v-xxx 属性)。
+     而且"写文章预览"和"文章详情页"两处都要用同一套样式,
+     所以放全局, 两边都用 class="md-body" 包一下就行。
+   ============================================================ */
+/* ⚠️ 这里的 overflow-wrap 必须跟上面那条兜底规则【一致】。
+   word-wrap 是 overflow-wrap 的旧名字, 是【同一个属性】——
+   这条写在后面, 会覆盖那一条。所以两处都写成 anywhere。 */
+.md-body { font-size: 15px; line-height: 1.85; color: #374151; overflow-wrap: anywhere; }
+
+.md-body > *:first-child { margin-top: 0; }
+.md-body > *:last-child { margin-bottom: 0; }
+
+/* 标题 */
+.md-body h1 { font-size: 24px; margin: 26px 0 14px; color: #1f2937; line-height: 1.4; }
+.md-body h2 { font-size: 20px; margin: 24px 0 12px; color: #1f2937; line-height: 1.4;
+              padding-bottom: 8px; border-bottom: 1px solid #eef1f6; }
+.md-body h3 { font-size: 17px; margin: 20px 0 10px; color: #1f2937; }
+.md-body h4, .md-body h5, .md-body h6 { font-size: 15px; margin: 16px 0 8px; color: #4b5563; }
+
+/* 段落 / 列表 */
+.md-body p { margin: 12px 0; }
+.md-body ul, .md-body ol { margin: 12px 0; padding-left: 24px; }
+.md-body li { margin: 5px 0; }
+.md-body li > ul, .md-body li > ol { margin: 4px 0; }
+
+/* 行内代码 */
+.md-body code {
+  background: #f1f5f9; color: #be185d;
+  padding: 2px 6px; border-radius: 5px;
+  font-size: 13.5px;
+  font-family: "JetBrains Mono", Consolas, Monaco, monospace;
+}
+
+/* 代码块 (深色底, 跟 highlight.js 的深色主题配套) */
+.md-body pre {
+  background: #282c34; border-radius: 10px;
+  padding: 15px 18px; margin: 16px 0;
+  overflow-x: auto;
+}
+.md-body pre code {
+  background: transparent; color: inherit;
+  padding: 0; font-size: 13.5px; line-height: 1.65;
+}
+
+/* 引用 */
+.md-body blockquote {
+  border-left: 4px solid #99f6e4; background: #f0fdfa;
+  margin: 14px 0; padding: 10px 16px;
+  color: #4b5563; border-radius: 0 8px 8px 0;
+}
+.md-body blockquote p { margin: 5px 0; }
+
+/* 表格 */
+.md-body table {
+  border-collapse: collapse; margin: 16px 0; width: 100%; font-size: 14px;
+}
+.md-body th, .md-body td { border: 1px solid #e6ebf2; padding: 9px 13px; text-align: left; }
+.md-body th { background: #f8fafb; font-weight: 600; color: #1f2937; }
+
+/* 链接 / 分割线 / 图片 */
+.md-body a { color: #14b8a6; text-decoration: none; border-bottom: 1px solid #99f6e4; }
+.md-body a:hover { color: #0d9488; border-bottom-color: #0d9488; }
+.md-body hr { border: none; border-top: 1px solid #eef1f6; margin: 22px 0; }
+.md-body img { max-width: 100%; border-radius: 10px; margin: 10px 0; }
