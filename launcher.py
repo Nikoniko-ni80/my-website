@@ -30,8 +30,15 @@ MYSQL_BIN = r"C:\Users\qi\mysql\bin\mysqld.exe"
 MYSQL_BASEDIR = "C:/Users/qi/mysql"
 MYSQL_DATADIR = "C:/Users/qi/mysql/data"
 
-BACKEND_DIR = r"C:\Users\qi\Desktop\源码\后端\myapp"
-FRONTEND_DIR = r"C:\Users\qi\Desktop\源码\前端\myapp-frontend"
+# ★ 这两个改成"跟着 launcher.py 自己走" —— 不写死绝对路径。
+#   为什么? 写死路径的话, 哪天你把整个项目文件夹挪个地方(换电脑 / 换个盘 /
+#   放进 git 仓库的子目录), 这里就失效了, 而且报的错是"找不到目录", 很难想到是这。
+#   os.path.dirname(__file__) = "launcher.py 自己所在的文件夹"
+#   所以 launcher.py 跟 myapp / myapp-frontend 放同一层就行。
+import os
+_HERE = os.path.dirname(os.path.abspath(__file__))
+BACKEND_DIR = os.path.join(_HERE, "myapp")
+FRONTEND_DIR = os.path.join(_HERE, "myapp-frontend")
 
 PORT = 5001          # 控制台自己占的端口
 
