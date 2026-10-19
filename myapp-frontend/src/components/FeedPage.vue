@@ -21,7 +21,7 @@
           >
             <div class="f-avatar">
               <img v-if="u.avatar" :src="u.avatar" alt="" />
-              <span v-else>{{ emojiOf(u.username) }}</span>
+              <span v-else><IconUser /></span>
             </div>
             <div class="f-text">
               <p class="f-name">{{ u.username }}</p>
@@ -51,7 +51,7 @@
               class="item card hoverable"
               @click="goDetail(a.id)"
             >
-              <div class="cover" :class="coverOf(i)">{{ emojiOf(a.author) }}</div>
+              <div class="cover" :class="coverOf(i)"><IconDoc /></div>
               <div class="art-text">
                 <p class="t"><strong>{{ a.title }}</strong></p>
                 <p class="c">{{ stripMarkdown(a.content) || '（无内容）' }}</p>
@@ -89,6 +89,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getMyFeed, getMyFollowing } from '../services/authApi.js'
 import { stripMarkdown } from '../utils/markdown.js'
+import { goLogin } from '../utils/auth.js'
 
 const router = useRouter()
 
@@ -107,12 +108,6 @@ const goUser = (id) => { if (id) router.push(`/user/${id}`) }
 // ---- 封面装饰 (跟其他列表页一个套路, 纯样式) ----
 const covers = ['cover-1', 'cover-2', 'cover-3', 'cover-4', 'cover-5', 'cover-6']
 const coverOf = (i) => covers[i % covers.length]
-const emojiOf = (name) => {
-  const pool = ['🐦', '🐕', '🐳', '🐱', '🦊', '🐼']
-  let n = 0
-  for (const ch of (name || '?')) n += ch.charCodeAt(0)
-  return pool[n % pool.length]
-}
 
 const fmtTime = (s) => {
   if (!s) return ''
@@ -132,7 +127,7 @@ const fmtTime = (s) => {
 const handleErr = (err) => {
   if (err.response && err.response.status === 401) {
     localStorage.removeItem('token')
-    router.push('/login')
+    goLogin(router)
   } else {
     error.value = '加载失败：' + err.message
   }
@@ -155,7 +150,7 @@ const loadFollowing = async () => {
 // 右侧: 动态流
 const load = async () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }   // 这个页必须登录
+  if (!token) { goLogin(router); return }   // 这个页必须登录
 
   loading.value = true
   error.value = ''
@@ -243,7 +238,8 @@ onMounted(() => {
 }
 .cover {
   width: 54px; height: 54px; border-radius: 12px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center; font-size: 24px;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(15, 118, 110, 0.45);
 }
 .art-text { flex: 1; min-width: 0; }
 .t { font-size: 15px; }

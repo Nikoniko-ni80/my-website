@@ -3,10 +3,14 @@
     <!-- 顶部导航栏 -->
     <header class="topnav">
       <div class="nav-inner">
-        <router-link to="/home" class="logo">✨ 我的文章站</router-link>
+        <router-link to="/home" class="logo">
+          <img class="logo-mascot" src="/mascot-avatar.png" alt="" />
+          <span class="logo-text">文章站</span>
+        </router-link>
 
         <nav class="menu">
           <router-link to="/home">首页</router-link>
+          <router-link to="/hot">🔥 热榜</router-link>
           <router-link to="/feed">关注</router-link>
           <router-link to="/ai">AI 助手</router-link>
           <router-link to="/me">我的</router-link>
@@ -29,6 +33,19 @@
 
     <!-- 页面内容 -->
     <router-view />
+
+    <!-- 页脚: 短页面底下不会空着, 也让它更像一个"站" -->
+    <footer class="footer">
+      <div class="footer-inner">
+        <span>© 2026 我的文章站</span>
+        <span class="dot">·</span>
+        <span>FastAPI + Vue 3 + MySQL + Redis</span>
+        <span class="dot">·</span>
+        <a href="http://127.0.0.1:8000/docs" target="_blank" rel="noreferrer">接口文档</a>
+        <span class="dot">·</span>
+        <a href="http://127.0.0.1:8000/articles/hot" target="_blank" rel="noreferrer">热榜 API</a>
+      </div>
+    </footer>
   </div>
 </template>
 
@@ -84,11 +101,30 @@ watch(() => route.fullPath, refresh)
 }
 
 .logo {
-  font-size: 18px;
-  font-weight: 700;
-  color: #14b8a6;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #0f766e;
   text-decoration: none;
   white-space: nowrap;
+}
+
+/* LOGO: 二次元头像, 圆形裁切 */
+.logo-mascot {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(20, 184, 166, 0.22);
+}
+
+/* 纯文字字标: 不放图标, 靠字重和字距撑起来 */
+.logo-text {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #0f766e;
 }
 
 .menu { display: flex; gap: 28px; flex: 1; }
@@ -129,4 +165,29 @@ watch(() => route.fullPath, refresh)
   transition: all 0.15s;
 }
 .login-link:hover { background: #14b8a6; color: #fff; }
+
+/* ---- 页脚 ---- */
+.footer {
+  margin-top: 48px;
+  padding: 28px 24px 36px;
+  border-top: 1px solid rgba(20, 184, 166, 0.14);
+  text-align: center;
+  font-size: 12px;
+  color: #9aa5b1;
+}
+.footer-inner {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  max-width: var(--maxw);
+  margin: 0 auto;
+}
+.footer a {
+  color: #14b8a6;
+  text-decoration: none;
+}
+.footer a:hover { text-decoration: underline; }
+.footer .dot { color: #d1d8e0; }
 </style>

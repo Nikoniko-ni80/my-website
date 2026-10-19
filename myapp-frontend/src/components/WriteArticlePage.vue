@@ -22,6 +22,39 @@
     <!-- 标题 -->
     <input class="title-input" v-model="title" placeholder="请输入标题…" />
 
+    <!-- ===== 标签 ===== -->
+    <div class="tag-row">
+      <span class="tag-label">标签</span>
+      <div class="tag-box">
+        <span v-for="t in tags" :key="t" class="tag-chip">
+          {{ t }}
+          <button class="tag-x" @click="removeTag(t)">×</button>
+        </span>
+        <input
+          v-model="tagInput"
+          class="tag-input"
+          :disabled="tags.length >= MAX_TAGS"
+          :placeholder="tags.length >= MAX_TAGS ? '最多 5 个标签' : '输入后按回车添加…'"
+          @keydown.enter.prevent="addTagFromInput"
+          @input="searchTags"
+          @focus="searchTags"
+          @blur="closeSuggest"
+        />
+      </div>
+
+      <!-- 联想下拉: 用 mousedown.prevent 抢在 blur 之前触发 -->
+      <div v-if="showSuggest && suggestions.length" class="tag-suggest">
+        <div
+          v-for="s in suggestions" :key="s.id"
+          class="sug-item"
+          @mousedown.prevent="pickTag(s.name)"
+        >
+          <span>{{ s.name }}</span>
+          <span class="sug-count">{{ s.count }} 篇</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 工具栏 -->
     <div class="toolbar">
       <button v-for="t in tools" :key="t.label" :title="t.tip" @click="applyTool(t)">
@@ -63,8 +96,9 @@ print('代码块')
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getMyArticles, addArticle, updateArticle } from '../services/authApi.js'
+import { getMyArticle, addArticle, updateArticle, getTags } from '../services/authApi.js'
 import { renderMarkdown } from '../utils/markdown.js'
+import { goLogin } from '../utils/auth.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -84,6 +118,71 @@ const editorRef = ref(null)
 
 // 预览: 内容一变就重新算 (computed 会自己缓存, 不用手动更新)
 const rendered = computed(() => renderMarkdown(content.value))
+
+// ============================================================
+// 标签
+// ============================================================
+const MAX_TAGS = 5                 // 跟后端 MAX_TAGS_PER_ARTICLE 对齐
+const tags = ref([])               // 已选的标签名, 如 ["Redis", "缓存"]
+const tagInput = ref('')           // 输入框里正在打的字
+const suggestions = ref([])        // 联想出来的"已有标签"
+const showSuggest = ref(false)
+let suggestTimer = null            // 防抖计时器
+
+// 加一个标签 (回车 / 点联想项都会走这里)
+const addTag = (raw) => {
+  // 前端也做一次规范化: 去首尾空格 + 合并连续空格
+  // (后端还会再做一次 —— 前端传的一律不可信)
+  const name = String(raw || '').trim().replace(/\s+/g, ' ')
+  if (!name) return
+  if (tags.value.length >= MAX_TAGS) return
+  // 大小写不敏感地判重: 已经有 Redis 了, 就不要再加 redis
+  if (tags.value.some(t => t.toLowerCase() === name.toLowerCase())) return
+  tags.value.push(name)
+}
+
+const addTagFromInput = () => {
+  addTag(tagInput.value)
+  tagInput.value = ''
+  suggestions.value = []
+  showSuggest.value = false
+}
+
+const pickTag = (name) => {
+  addTag(name)
+  tagInput.value = ''
+  suggestions.value = []
+  showSuggest.value = false
+}
+
+const removeTag = (name) => {
+  tags.value = tags.value.filter(t => t !== name)
+}
+
+// 输入时调接口拿"已有标签"做联想
+// ★ 防抖: 每打一个字就请求一次太浪费, 停 250ms 才发
+const searchTags = () => {
+  clearTimeout(suggestTimer)
+  suggestTimer = setTimeout(async () => {
+    try {
+      const res = await getTags(tagInput.value, 8)
+      // 已经选过的不再显示
+      suggestions.value = (res.data.items || []).filter(
+        s => !tags.value.some(t => t.toLowerCase() === s.name.toLowerCase())
+      )
+      showSuggest.value = suggestions.value.length > 0
+    } catch (e) {
+      // 联想失败不能打扰用户, 控制台留个记录就行
+      console.error('标签联想失败:', e)
+    }
+  }, 250)
+}
+
+// 输入框失焦时收起下拉。
+// 延迟 120ms: 给联想项的 mousedown 一点时间先触发
+const closeSuggest = () => {
+  setTimeout(() => { showSuggest.value = false }, 120)
+}
 
 // ============================================================
 // 工具栏: 点一下按钮, 帮你在光标处插入 Markdown 语法
@@ -127,16 +226,19 @@ function applyTool(t) {
 // ---------- 编辑模式: 先把原文章读进来 ----------
 onMounted(async () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
   if (!editId) return
   try {
-    const res = await getMyArticles(token)
-    const a = res.data.find(x => x.id === editId)
-    if (a) {
+    // ★ 用 getMyArticle 而不是 getMyArticles:
+    //   前者是单篇详情, 返回里带 tags; 后者是列表, 不带标签
+    const res = await getMyArticle(token, editId)
+    const a = res.data
+    if (!a.error) {
       title.value = a.title
       content.value = a.content
       isPublic.value = a.is_public
       category.value = a.category || ''          // ★ 回填分类
+      tags.value = (a.tags || []).map(t => t.name)   // ★ 回填标签
     }
   } catch (e) {
     msg.value = '加载失败：' + e.message
@@ -151,13 +253,13 @@ const handleDone = async () => {
     return
   }
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
 
   try {
     if (isEdit) {
-      await updateArticle(token, editId, title.value.trim(), content.value.trim(), isPublic.value, category.value)
+      await updateArticle(token, editId, title.value.trim(), content.value.trim(), isPublic.value, category.value, tags.value)
     } else {
-      await addArticle(token, title.value.trim(), content.value.trim(), isPublic.value, category.value)
+      await addArticle(token, title.value.trim(), content.value.trim(), isPublic.value, category.value, tags.value)
     }
     router.push('/my-articles')
   } catch (err) {
@@ -216,6 +318,60 @@ const handleDone = async () => {
   padding: 8px 4px 16px; border-bottom: 1px solid #eef1f6;
 }
 .title-input::placeholder { color: #c3ccd8; }
+
+/* ===== 标签 ===== */
+.tag-row {
+  position: relative;              /* 联想下拉要绝对定位在它下面 */
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 4px 10px;
+}
+.tag-label {
+  flex-shrink: 0; font-size: 13px; color: #6b7280;
+}
+.tag-box {
+  flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  min-height: 34px; padding: 4px 6px;
+  border: 1px solid #e6ebf2; border-radius: 10px;
+  background: #fff; transition: border-color 0.15s;
+}
+.tag-box:focus-within { border-color: #14b8a6; }
+
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 8px; border-radius: 7px;
+  background: #ccfbf1; color: #0f766e;
+  font-size: 12px; line-height: 1.5;
+}
+.tag-x {
+  border: none; background: transparent; cursor: pointer;
+  color: #0f766e; font-size: 14px; line-height: 1;
+  padding: 0 1px; opacity: 0.6;
+}
+.tag-x:hover { opacity: 1; }
+
+.tag-input {
+  flex: 1; min-width: 140px;
+  border: none; outline: none; background: transparent;
+  font-size: 13px; color: #1f2937; padding: 4px 2px;
+}
+.tag-input::placeholder { color: #b6c0cc; }
+.tag-input:disabled { cursor: not-allowed; }
+
+/* 联想下拉 */
+.tag-suggest {
+  position: absolute; left: 52px; right: 4px; top: 100%;
+  z-index: 30;
+  background: #fff; border: 1px solid #e6ebf2; border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20, 184, 166, 0.14);
+  overflow: hidden;
+}
+.sug-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; font-size: 13px; color: #374151;
+  cursor: pointer;
+}
+.sug-item:hover { background: #f0fdfa; color: #0f766e; }
+.sug-count { font-size: 11px; color: #9aa5b1; }
 
 /* 工具栏 */
 .toolbar {

@@ -3,15 +3,20 @@
 # ============================================================
 # 从 main.py 搬过来的, 代码本身一个字没改, 只把 @app 换成了 @router
 from collections import defaultdict
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from cache import (count_view, add_hot,
+                   redis_client, HOT_KEY,
+                   W_VIEW, W_LIKE, W_COMMENT)
 from database import get_db
 from models import User, Article, Comment, CommentLike, ArticleLike
 from schemas import ArticleIn, CommentIn, CATEGORIES
 from dependencies import get_current_user, get_current_user_optional
+from routers.tags import set_article_tags, tags_of_articles
 
 router = APIRouter()
 
@@ -43,6 +48,12 @@ def create_article(
     db.add(new_article)
     db.commit()
     db.refresh(new_article)            # 从数据库刷新, 拿到自动生成的 id
+
+    # ★ 处理标签: 查已有的复用 / 没有的自动创建 / 在中间表建关联
+    #   (放在文章入库之后 —— 因为中间表需要 article_id)
+    set_article_tags(db, new_article.id, article.tags)
+    db.commit()
+
     return {"message": "发布成功", "id": new_article.id, "title": new_article.title}
 
 
@@ -104,7 +115,9 @@ def get_my_article(
             "like_count": db.query(ArticleLike).filter(
                 ArticleLike.article_id == article_id
             ).count(),
-            "liked_by_me": _has_liked(current_user, article_id, db)}
+            "liked_by_me": _has_liked(current_user, article_id, db),
+            # ★ 标签: [{"id": 1, "name": "Redis"}, ...]
+            "tags": tags_of_articles(db, [article_id]).get(article_id, [])}
 
 
 # ---------- 改自己的文章 PUT /articles/{id} (需登录) ----------
@@ -131,6 +144,11 @@ def update_article(
     row.is_public = article.is_public
     row.category = article.category
     db.commit()
+
+    # ★ 标签也整体替换掉 (先删旧关联, 再按新的一批重建)
+    set_article_tags(db, article_id, article.tags)
+    db.commit()
+
     return {"message": "修改成功"}
 
 
@@ -220,12 +238,16 @@ def list_articles(
         }
         # ⚠️ 一篇赞都没有的文章不会出现在结果里 → 下面用 .get(id, 0) 补 0
 
+    # ⑤ ★ 同一页文章的标签, 也是一条 IN 查完再分组 (别 N+1)
+    tag_map = tags_of_articles(db, art_ids)
+
     return {
         "items": [
             {"id": a.id, "title": a.title, "content": a.content,
              "user_id": a.user_id, "author": username,
              "category": a.category,                  # ★ 分类 (空字符串 = 未分类)
-             "like_count": like_map.get(a.id, 0)}     # ★ 现算的, 补 0
+             "like_count": like_map.get(a.id, 0),     # ★ 现算的, 补 0
+             "tags": tag_map.get(a.id, [])}           # ★ 标签
             for a, username in rows
         ],
         "total": total,
@@ -235,6 +257,105 @@ def list_articles(
         #   ↑ 向上取整的小技巧: 12 篇 / 每页 9 → (12+8)//9 = 2 页
         #     直接写 12//9 会得到 1 (整数除法向下取整), 所以先加 size-1
     }
+
+
+# ============================================================
+# 热榜 GET /articles/hot
+# ============================================================
+# ⚠️⚠️ 这个接口【必须】写在 /articles/{article_id} 的【前面】!
+#
+#   FastAPI 是按【声明顺序】匹配路由的。如果写在后面,
+#   请求 /articles/hot 会先撞上 /articles/{article_id} 那条,
+#   它把 "hot" 当成 article_id 去转 int → 直接 422。
+#   这个 bug 特别隐蔽: 代码看着全对, 就是报 422。
+#
+# 【为什么不能直接 ZREVRANGE 取前 10】
+#   ZSET 里存的是【原始分】, 没算时间衰减 —— 老文章会永远霸榜。
+#   所以流程是: 取一批候选 → 现算衰减 → 重排 → 取前 limit。
+# ============================================================
+@router.get("/articles/hot")
+def hot_articles(
+    limit: int = 10,
+    db: Session = Depends(get_db),
+):
+    limit = max(1, min(limit, 50))        # 防着前端传 99999
+
+    # ---------- ① 从 Redis 拿【原始分】前 50 ----------
+    raw = redis_client.zrevrange(HOT_KEY, 0, 49, withscores=True)
+    #     → [ ("11", 50.0), ("20", 34.0), ... ]
+    raw_map = {int(aid): float(score) for aid, score in raw}
+    #           ↑ 成员是字符串, 转成 int
+
+    # ---------- ② 补上"最近 24 小时发布的新文章" ----------
+    # 为什么? 新文章原始分低, 排不进前 50 → 永远没机会上榜。
+    #        这跟"时间衰减要给新文章机会"的初衷矛盾, 所以单独留座位。
+    since = datetime.now() - timedelta(hours=24)
+    recent_ids = [
+        rid for (rid,) in db.query(Article.id).filter(
+            Article.is_public == True,
+            Article.created_at >= since,
+        ).all()
+    ]
+
+    # ★ 这些新文章如果不在前 50 里, raw_map 里是没有它们的分数的。
+    #   必须回 Redis 单独补查 —— 不能默认 0,
+    #   否则"有点热度但没进前 50"的文章会被当成 0 分, 补了等于没补。
+    if recent_ids:
+        pipe = redis_client.pipeline()
+        for aid in recent_ids:
+            pipe.zscore(HOT_KEY, aid) ##把查询多篇文章的命令合在一起
+        for aid, s in zip(recent_ids, pipe.execute()): ##一起发出去
+            if s is not None:
+                raw_map[aid] = float(s)
+
+    ids = list(raw_map.keys())
+    if not ids:
+        return {"items": []}              # 冷启动, 榜还没建
+
+    # ---------- ③ 一次把候选的详情查出来 ----------
+    rows = (
+        db.query(Article, User.username)
+        .join(User, Article.user_id == User.id)
+        .filter(Article.id.in_(ids), Article.is_public == True)
+        .all()
+    )
+
+    # 点赞量: 还是 IN + GROUP BY 那一套, 别写成 N+1
+    likes = {
+        aid: n for aid, n in
+        db.query(ArticleLike.article_id, func.count())
+        .filter(ArticleLike.article_id.in_(ids))
+        .group_by(ArticleLike.article_id).all()
+    }
+
+    # ---------- ④ 现算衰减分 ----------
+    #     展示分 = 原始分 / (发布后几小时 + 2) ^ 1.5
+    #     "+2" 防止刚发布的文章除以 0
+    #     "1.5" 来自 Reddit / Hacker News 的公开公式
+    now = datetime.now()
+    ranked = []
+    for a, name in rows:
+        created = a.created_at or now
+        hours = max((now - created).total_seconds() / 3600, 0)
+        shown = raw_map.get(a.id, 0) / ((hours + 2) ** 1.5)
+        ranked.append((shown, a, name))
+
+    # ---------- ⑤ 重排, 取前 limit ----------
+    ranked.sort(key=lambda x: -x[0])      # 降序 (Python 没有直接倒序的 sort)
+
+    return {"items": [
+        {"id": a.id, "title": a.title, "content": a.content,
+         "user_id": a.user_id, "author": name,
+         "category": a.category,
+         "like_count": likes.get(a.id, 0),
+         # ① 显示用: 原始热度分 (用户看得懂 —— "这篇被互动了 50 次")
+         "heat": int(raw_map.get(a.id, 0)),
+         # ② 排序用: 衰减后的分。很小是正常的 ——
+         #    你的文章都发了三四周, 50 / 15000 ≈ 0.003。
+         #    它只负责"谁排前面", 不适合直接显示。
+         "rank_score": round(shown, 4)}
+        for shown, a, name in ranked[:limit]
+    ]}
 
 
 # ---------- 小工具: 判断"我赞过这篇文章没" ----------
@@ -253,6 +374,7 @@ def _has_liked(current_user, article_id: int, db) -> bool:
 @router.get("/articles/{article_id}")
 def get_article(
     article_id: int,
+    request: Request,      # ★ 多要一个 request, 是为了拿【访客 IP】(没登录时用它去重)
     # ★ 可选登录: 没登录也能看文章, 登录了才知道"我赞过没"
     current_user: User | None = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
@@ -268,6 +390,32 @@ def get_article(
     if row is None:
         return {"error": "文章不存在或未公开"}
     a, u = row
+
+    # ------------------------------------------------------------
+    # ★ 记一次阅读 (第 9 步: 阅读量 + 热度榜)
+    # ------------------------------------------------------------
+    # 【为什么放在这个位置】
+    #   上面那句 if row is None 已经 return 走了。能执行到这儿, 说明
+    #   "这篇文章真的存在、真的是公开的" —— 不会给不存在的 id 刷量。
+    #
+    # 【为什么写在 GET 里】GET 按道理是"只读"的, 这里偷偷写了数据, 确实别扭。
+    #   但另一个候选位置 POST /history/{id} 要登录才调得到, 未登录的阅读
+    #   就全丢了(演示时你自己多半是没登录的状态)。两害相权取这个。
+    #   ★ 真实项目里也确实这么干, 叫"埋点写在读接口里"。
+    #
+    # 【viewer 是干嘛的】只是个去重标记, 不落库:
+    #     登录了 → "u3"    (同一个账号一小时内只算一次)
+    #     没登录 → "ip127.0.0.1"
+    viewer = f"u{current_user['id']}" if current_user else f"ip{request.client.host}"
+    ##如果前端没有返回对象就用ip
+    count_view(article_id, viewer)
+
+    # ↑ 阅读量 +1 (记账用)
+    # ↓ 同时给热度 +1 (排名用) —— 这是【两件不同的事】:
+    #     阅读量回答"这篇被看了几次", 热度回答"这篇热不热"
+    #   阅读是最廉价的互动, 所以权重最低 (W_VIEW = 1)
+    add_hot(article_id, W_VIEW)
+
     return {"id": a.id, "title": a.title, "content": a.content,
             "user_id": a.user_id, "author": u.username,
             "category": a.category,
@@ -280,7 +428,9 @@ def get_article(
                 ArticleLike.article_id == article_id
             ).count(),
             # ★ 我赞过没 (没登录就是 False)
-            "liked_by_me": _has_liked(current_user, article_id, db)}
+            "liked_by_me": _has_liked(current_user, article_id, db),
+            # ★ 标签
+            "tags": tags_of_articles(db, [article_id]).get(article_id, [])}
 
 
 # ============================================================
@@ -369,6 +519,11 @@ def create_comment(
     db.add(new_comment)
     db.commit()
     db.refresh(new_comment)
+
+    # ★ 评论 +5 热度。放在 commit【之后】—— 确认真的存进库了才算数。
+    #   放前面的话, 万一 commit 失败, 热度就白涨了。
+    add_hot(article_id, W_COMMENT)
+
     return {"message": "评论成功", "id": new_comment.id, "root_id": new_comment.root_id}
 
 
@@ -549,8 +704,17 @@ def delete_comment(
     #       所有回复的 root_id 都直接指向顶层, 谁也不指向上一条回复)
     #   ② 删的是【一条回复】 → 别人 parent_id 指向它的, 由 SET NULL 置空;
     #      而别人的内容、别人的 root_id 一根毫毛都不动
+    # ★ 删之前先数一下要消失几条评论:
+    #   删【根评论】会级联带走它下面所有回复, 那些也是评论, 分也得扣。
+    #   只扣 5 分的话, 有人发一堆评论再一删, 分数就永久虚高了。
+    n_deleted = 1 + db.query(Comment).filter(Comment.root_id == cmt.id).count()
+
     db.delete(cmt)
     db.commit()
+
+    # ★ 扣掉这些评论的热度。不管是谁删的 —— 作者删别人的评论, 一样要扣,
+    #   因为那些评论确实从站上消失了。
+    add_hot(art.id, -W_COMMENT * n_deleted)
 
     return {"message": "删除成功"}
 
@@ -636,6 +800,11 @@ def like_article(
 
     db.add(ArticleLike(user_id=me, article_id=article_id))
     db.commit()
+
+    # ★ 点赞 +3 热度。注意放在了"已经赞过"那个 return 的【后面】——
+    #   重复点赞走不到这里, 所以不会重复加分。
+    add_hot(article_id, W_LIKE)
+
     return {"message": "点赞成功"}
 
 
@@ -652,4 +821,11 @@ def unlike_article(
         ArticleLike.article_id == article_id,
     ).delete()
     db.commit()
+
+    # ★ 只有【真的删掉了一条赞】才扣分。
+    #   不加 if n 的话,"取消一个本来就没赞的"会被白扣 3 分 ——
+    #   有人狂调这个接口就能把别人文章的热度刷成负数。
+    if n:
+        add_hot(article_id, -W_LIKE)
+
     return {"message": "已取消点赞" if n else "本来就没赞"}

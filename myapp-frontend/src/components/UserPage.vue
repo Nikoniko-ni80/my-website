@@ -14,7 +14,7 @@
         <!-- 头像: 有 URL 就显示图片, 没有就用默认 emoji 占位 -->
         <div class="avatar">
           <img v-if="user.avatar" :src="user.avatar" alt="头像" />
-          <span v-else>{{ emojiOf(user.username) }}</span>
+          <span v-else><IconUser /></span>
         </div>
 
         <div class="info">
@@ -59,7 +59,7 @@
           class="item card hoverable"
           @click="$router.push(`/article/${a.id}`)"
         >
-          <div class="cover" :class="coverOf(i)">{{ emojiOf(user.username) }}</div>
+          <div class="cover" :class="coverOf(i)"><IconDoc /></div>
           <div class="art-text">
             <p class="t"><strong>{{ a.title }}</strong></p>
             <p class="c">{{ stripMarkdown(a.content) || '（无内容）' }}</p>
@@ -95,7 +95,7 @@
         >
           <div class="u-avatar">
             <img v-if="u.avatar" :src="u.avatar" alt="" />
-            <span v-else>{{ emojiOf(u.username) }}</span>
+            <span v-else><IconUser /></span>
           </div>
           <div class="u-text">
             <p class="u-name">{{ u.username }}</p>
@@ -126,7 +126,7 @@
         <div class="preview">
           <div class="avatar small">
             <img v-if="editAvatar" :src="editAvatar" alt="" @error="imgBad = true" />
-            <span v-else>{{ emojiOf(myName) }}</span>
+            <span v-else><IconUser /></span>
           </div>
           <span class="pv-tip">
             {{ editAvatar ? (imgBad ? '⚠️ 这个地址加载不出图片' : '预览') : '没填就用默认头像' }}
@@ -156,6 +156,7 @@ import {
 } from '../services/authApi.js'
 import { stripMarkdown } from '../utils/markdown.js'
 import Modal from './Modal.vue'
+import { goLogin } from '../utils/auth.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -178,7 +179,7 @@ const followBusy = ref(false)
 
 const toggleFollow = async () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
   if (followBusy.value) return
 
   followBusy.value = true
@@ -251,7 +252,7 @@ watch(editAvatar, () => { imgBad.value = false })
 
 const save = async () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
   saving.value = true
   editMsg.value = ''
   try {
@@ -272,7 +273,7 @@ const save = async () => {
   } catch (err) {
     if (err.response && err.response.status === 401) {
       localStorage.removeItem('token')
-      router.push('/login')
+      goLogin(router)
     } else {
       error.value = '保存失败：' + err.message
       showEdit.value = false
@@ -284,12 +285,6 @@ const save = async () => {
 // ---- 封面装饰 (跟首页/收藏页/历史页一个套路, 纯样式) ----
 const covers = ['cover-1', 'cover-2', 'cover-3', 'cover-4', 'cover-5', 'cover-6']
 const coverOf = (i) => covers[i % covers.length]
-const emojiOf = (name) => {
-  const pool = ['🐦', '🐕', '🐳', '🐱', '🦊', '🐼']
-  let n = 0
-  for (const ch of (name || '?')) n += ch.charCodeAt(0)
-  return pool[n % pool.length]
-}
 
 // 时间 → 人话 (跟 HistoryPage 一样的写法)
 const fmtTime = (s) => {
@@ -361,7 +356,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page { max-width: 820px; padding-top: 24px; }
+.page { max-width: 1080px; padding-top: 24px; }
 
 .back {
   border: none; background: transparent; cursor: pointer;
@@ -460,7 +455,8 @@ onMounted(load)
 }
 .cover {
   width: 54px; height: 54px; border-radius: 12px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center; font-size: 24px;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(15, 118, 110, 0.45);
 }
 .art-text { flex: 1; min-width: 0; }
 .t { font-size: 15px; }

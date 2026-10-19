@@ -14,7 +14,7 @@
       <div class="art card">
         <h1 class="title">{{ article.title }}</h1>
         <div class="meta">
-          <span class="avatar">🐦</span>
+          <span class="avatar"><IconUser /></span>
           <!-- ★ 作者名可点 → 跳个人主页 -->
           <span class="author clickable" @click="goAuthor">{{ article.author }}</span>
           <span class="time">{{ fmtDate(article.created_at) }}</span>
@@ -35,6 +35,16 @@
              ⚠️ 内容已经在 renderMarkdown 里被 DOMPurify 洗过了, 见 utils/markdown.js -->
         <div v-if="article.content" class="md-body" v-html="renderedContent"></div>
         <div v-else class="empty-content">（无内容）</div>
+
+        <!-- ★ 标签: 点一下 → 跳到该标签的列表页 (不是搜索框) -->
+        <div v-if="article.tags && article.tags.length" class="tag-list">
+          <span class="tag-list-label">标签</span>
+          <span
+            v-for="t in article.tags" :key="t.id"
+            class="tag-chip"
+            @click="$router.push(`/tag/${encodeURIComponent(t.name)}`)"
+          ># {{ t.name }}</span>
+        </div>
       </div>
 
       <!-- 评论区 -->
@@ -65,14 +75,15 @@
           </div>
         </div>
 
-        <p v-if="cMsg" class="c-msg">{{ cMsg }}</p>
+        <!-- 提示条: 成功用柔和青绿, 失败才用红色 -->
+        <p v-if="cMsg" class="c-msg" :class="{ err: !cMsgOk }">{{ cMsg }}</p>
 
         <!-- 评论列表 -->
         <div class="c-list">
           <div v-for="c in comments" :key="c.id" class="c-block">
             <!-- ===== 顶层评论 ===== -->
             <div class="c-item">
-              <span class="c-avatar">🐦</span>
+              <span class="c-avatar"><IconUser /></span>
               <div class="c-body">
                 <p class="c-author">
                   <span class="clickable" @click="goUser(c.user_id)">{{ c.author }}</span>
@@ -96,7 +107,7 @@
             <!-- ===== 回复区 (缩进一层) ===== -->
             <div v-if="c.replies && c.replies.length" class="c-replies">
               <div v-for="r in visibleReplies(c)" :key="r.id" class="c-item">
-                <span class="c-avatar small">🐦</span>
+                <span class="c-avatar small"><IconUser /></span>
                 <div class="c-body">
                   <p class="c-author">
                     <span class="clickable" @click="goUser(r.user_id)">{{ r.author }}</span>
@@ -144,6 +155,24 @@
         </div>
       </div>
 
+      <!-- ===== 相关阅读 (看完正文还有地方去, 也让页面往下延伸) ===== -->
+      <div v-if="related.length" class="related card">
+        <h3 class="rel-title">📚 相关阅读</h3>
+        <div class="rel-grid">
+          <div
+            v-for="r in related" :key="r.id"
+            class="rel-item"
+            @click="goArticle(r.id)"
+          >
+            <p class="rel-name">{{ r.title }}</p>
+            <div class="rel-meta">
+              <span class="rel-author">{{ r.author }}</span>
+              <span>👍 {{ r.like_count || 0 }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       </div>  <!-- /.main -->
 
       <!-- ========== 右侧作者卡片 ========== -->
@@ -151,7 +180,7 @@
         <div class="ac card">
           <div class="ac-avatar" @click="goAuthor">
             <img v-if="article.author_avatar" :src="article.author_avatar" alt="" />
-            <span v-else>{{ emojiOf(article.author) }}</span>
+            <span v-else><IconUser /></span>
           </div>
           <p class="ac-name" @click="goAuthor">{{ article.author }}</p>
           <p class="ac-bio">{{ article.author_bio || '这个人很懒，什么都没写～' }}</p>
@@ -170,6 +199,18 @@
             这是我自己的文章
           </button>
           <button class="ac-home" @click="goAuthor">查看主页 ›</button>
+        </div>
+
+        <!-- ===== 作者的其他文章 (填满右侧栏) ===== -->
+        <div v-if="authorArticles.length" class="ac card">
+          <p class="ac-side-title">📄 他的其他文章</p>
+          <div
+            v-for="a in authorArticles" :key="a.id"
+            class="side-art"
+            :title="a.title"
+            @click="goArticle(a.id)"
+          >{{ a.title }}</div>
+          <button class="ac-home" @click="goAuthor">查看全部 ›</button>
         </div>
 
         <!-- 📚 系列: 第 6 步才做, 先占个位置 -->
@@ -215,11 +256,13 @@ import {
   getArticle, getMyArticle, getComments, addComment, getCollectionsOfArticle, addHistory,
   getMe, followUser, unfollowUser, getFollowStatus,
   deleteComment, likeComment, unlikeComment,
-  likeArticle, unlikeArticle
+  likeArticle, unlikeArticle,
+  getPublicArticles, getUserProfile
 } from '../services/authApi.js'
 import { renderMarkdown } from '../utils/markdown.js'
 import Modal from './Modal.vue'
 import CollectionPicker from './CollectionPicker.vue'
+import { goLogin } from '../utils/auth.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -238,12 +281,17 @@ const loading = ref(false)
 const error = ref('')
 const isLogin = ref(!!localStorage.getItem('token'))
 
+// ---- 页面下半部分: 让看完正文的人还有地方去 ----
+const related = ref([])          // 同分类的其他文章
+const authorArticles = ref([])   // 作者的其他公开文章
+
 // ---- 评论区状态 ----
 const sort = ref('time')             // 'time' 最新 / 'hot' 最热
 const replyTo = ref(null)            // 正在回复谁: { id, author }; null = 发顶层评论
 const replyRoot = ref(null)          // 回复完之后要展开哪棵树
 const expanded = ref(new Set())      // 哪些顶层评论展开了全部回复
 const cMsg = ref('')                 // 评论区的提示 (错误/成功)
+const cMsgOk = ref(true)             // true = 成功提示, false = 错误提示
 const cBusy = ref(false)             // 请求锁
 const showDel = ref(false)           // 删除确认弹窗
 const delTarget = ref(null)          // 要删的那条
@@ -270,7 +318,7 @@ const loadComments = async () => {
   const token = localStorage.getItem('token')      // 可能是 null
   try {
     const res = await getComments(articleId, sort.value, token)
-    if (res.data.error) { cMsg.value = res.data.error; return }
+    if (res.data.error) { showErr(res.data.error); return }
     comments.value = res.data
   } catch (e) {
     console.error('获取评论失败', e)
@@ -295,6 +343,30 @@ const collapse = (id) => {
 }
 
 const goUser = (id) => { if (id) router.push(`/user/${id}`) }
+const goArticle = (id) => { if (id) router.push(`/article/${id}`) }
+
+// 页面下半部分的内容: 相关阅读 + 作者的其他文章
+// ★ 这是"装饰性内容" —— 加载失败【不能】影响正文, 所以整段包 try
+const loadMoreSections = async () => {
+  if (!article.value) return
+  try {
+    // ① 作者的其他文章 (顺手拿个人主页的数据)
+    const pr = await getUserProfile(article.value.user_id)
+    authorArticles.value = (pr.data.articles || [])
+      .filter(a => a.id !== articleId)
+      .slice(0, 5)
+
+    // ② 相关阅读: 优先同分类; 没分类就取最新的一批
+    const cat = article.value.category || ''
+    const rr = await getPublicArticles(1, 7, '', cat)
+    related.value = (rr.data.items || [])
+      .filter(a => a.id !== articleId)
+      .slice(0, 6)
+  } catch (e) {
+    // 只影响"底部推荐", 不影响正文和评论
+    console.error('相关阅读加载失败:', e)
+  }
+}
 
 // 时间 → 人话
 const fmtTime = (s) => {
@@ -311,9 +383,17 @@ const fmtTime = (s) => {
   return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 
-const toast = (m) => {
+// 提示条: 默认是"成功"样式 (柔和青绿)
+const toast = (m, ok = true) => {
   cMsg.value = m
+  cMsgOk.value = ok
   setTimeout(() => { if (cMsg.value === m) cMsg.value = '' }, 2000)
+}
+
+// 错误提示: 红色
+const showErr = (m) => {
+  cMsg.value = m
+  cMsgOk.value = false
 }
 
 onMounted(async () => {
@@ -352,6 +432,8 @@ onMounted(async () => {
     await loadFollowStatus()
     // 问一次"我是谁" —— 用来判断"这是不是我自己的文章"(自己的文章不显示关注按钮)
     await loadMyId()
+    // ★ 底部推荐【不 await】—— 让它自己慢慢加载, 不拖慢正文显示
+    loadMoreSections()
     // 顺便记一笔浏览历史
     await recordHistory()
   } catch (e) {
@@ -365,14 +447,14 @@ const handleComment = async () => {
   const text = newComment.value.trim()
   if (!text) return
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
   if (cBusy.value) return
 
   cBusy.value = true
   try {
     // replyTo 有值 → 回复那条; 没有 → 发顶层评论
     const res = await addComment(token, articleId, text, replyTo.value ? replyTo.value.id : null)
-    if (res.data.error) { cMsg.value = res.data.error; return }
+    if (res.data.error) { showErr(res.data.error); return }
 
     newComment.value = ''
     if (replyRoot.value) expand(replyRoot.value)   // 展开那棵树, 好看见自己刚发的
@@ -381,7 +463,7 @@ const handleComment = async () => {
     await loadComments()
     toast('发布成功')
   } catch (e) {
-    cMsg.value = '评论失败：' + e.message
+    showErr('评论失败：' + e.message)
   }
   cBusy.value = false
 }
@@ -389,7 +471,7 @@ const handleComment = async () => {
 // ---------- 点某条评论的「回复」 ----------
 // root 参数: 回复的是【一条回复】时, 把它的顶层评论传进来 (用来展开那棵树)
 const startReply = (c, root = null) => {
-  if (!isLogin.value) { router.push('/login'); return }
+  if (!isLogin.value) { goLogin(router); return }
   replyTo.value = { id: c.id, author: c.author }
   replyRoot.value = root ? root.id : c.id
   document.querySelector('.c-input input')?.focus()
@@ -399,7 +481,7 @@ const cancelReply = () => { replyTo.value = null; replyRoot.value = null }
 // ---------- 点赞 / 取消 ----------
 // ⚠️ 本地先改 (点一下立刻有反馈), 失败了再回滚
 const toggleLike = async (c) => {
-  if (!isLogin.value) { router.push('/login'); return }
+  if (!isLogin.value) { goLogin(router); return }
   const token = localStorage.getItem('token')
 
   const wasLiked = c.liked_by_me
@@ -412,7 +494,7 @@ const toggleLike = async (c) => {
   } catch (e) {
     c.liked_by_me = wasLiked          // 回滚
     c.like_count += wasLiked ? 1 : -1
-    toast('操作失败')
+    toast('操作失败', false)
   }
 }
 
@@ -426,16 +508,16 @@ const askDelete = (c) => {
 
 const doDelete = async () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
   try {
     const res = await deleteComment(token, delTarget.value.id)
-    if (res.data.error) { cMsg.value = res.data.error; showDel.value = false; return }
+    if (res.data.error) { showErr(res.data.error); showDel.value = false; return }
     showDel.value = false
     delTarget.value = null
     await loadComments()
     toast('已删除')
   } catch (e) {
-    cMsg.value = '删除失败：' + e.message
+    showErr('删除失败：' + e.message)
     showDel.value = false
   }
 }
@@ -443,7 +525,7 @@ const doDelete = async () => {
 // ---------- 点"收藏"按钮: 打开收藏面板 ----------
 const openPicker = () => {
   if (!isLogin.value) {          // 没登录 → 去登录 (跟上面发评论的处理一样)
-    router.push('/login')
+    goLogin(router)
     return
   }
   favMsg.value = ''
@@ -465,7 +547,7 @@ const likeBusy = ref(false)
 
 // 点赞/取消 —— 跟评论点赞一样: 本地先改(点一下立刻有反馈), 失败再回滚
 const toggleLikeArticle = async () => {
-  if (!isLogin.value) { router.push('/login'); return }
+  if (!isLogin.value) { goLogin(router); return }
   const token = localStorage.getItem('token')
   if (likeBusy.value) return
   likeBusy.value = true
@@ -501,7 +583,7 @@ const isMe = computed(() => myId.value !== null && article.value?.user_id === my
 // 点一下 → 关注/取关切换
 const toggleFollow = async () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
   if (followBusy.value) return            // 正在请求中, 直接忽略这次点击
 
   followBusy.value = true
@@ -551,12 +633,6 @@ const loadMyId = async () => {
 }
 
 // 没有头像时用 emoji 占位 (跟其他页面一个套路: 名字的字符和决定用哪只动物)
-const emojiOf = (name) => {
-  const pool = ['🐦', '🐕', '🐳', '🐱', '🦊', '🐼']
-  let n = 0
-  for (const ch of (name || '?')) n += ch.charCodeAt(0)
-  return pool[n % pool.length]
-}
 
 // 发布时间: "2026-09-23 11:42:47" → "2026年9月23日"
 const fmtDate = (s) => {
@@ -598,7 +674,7 @@ const recordHistory = async () => {
 
 <style scoped>
 /* ★ 改成左右两栏: 左边正文, 右边作者卡片。所以整体要放宽 */
-.detail { max-width: 1100px; padding-top: 24px; }
+.detail { max-width: 1200px; padding-top: 24px; }
 
 /* 两栏布局: 左边自动占满, 右边固定 260px */
 .layout { display: flex; gap: 20px; align-items: flex-start; }
@@ -658,6 +734,46 @@ const recordHistory = async () => {
 }
 .ac-home:hover { border-color: #14b8a6; color: #14b8a6; }
 
+/* ---- 右侧栏: 作者的其他文章 ---- */
+.ac-side-title {
+  font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 10px;
+}
+.side-art {
+  font-size: 12px; line-height: 1.5; color: #4b5563;
+  padding: 8px 0; border-bottom: 1px dashed #eef1f6;
+  cursor: pointer; overflow-wrap: anywhere;
+  transition: color 0.15s;
+}
+.side-art:last-of-type { border-bottom: none; }
+.side-art:hover { color: #0f766e; }
+
+/* ---- 底部: 相关阅读 ---- */
+.related { padding: 22px 26px; }
+.rel-title {
+  font-size: 16px; font-weight: 700; color: #1f2937; margin-bottom: 14px;
+}
+.rel-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
+}
+.rel-item {
+  padding: 12px 14px; border-radius: 12px;
+  background: #f8fafc; border: 1px solid transparent;
+  cursor: pointer; transition: all 0.16s;
+}
+.rel-item:hover {
+  background: #f0fdfa; border-color: #ccfbf1;
+  transform: translateY(-2px);
+}
+.rel-name {
+  font-size: 13px; font-weight: 600; color: #1f2937;
+  line-height: 1.5; margin-bottom: 6px; overflow-wrap: anywhere;
+}
+.rel-meta {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 11px; color: #9aa5b1;
+}
+.rel-author { color: #14b8a6; }
+
 /* 系列那块: 先占位, 第 6 步再填真内容 */
 .placeholder { background: #fafcfc; border: 1px dashed #e6ebf2; }
 .ph-title { font-size: 13px; color: #64748b; font-weight: 600; margin-bottom: 6px; }
@@ -715,6 +831,24 @@ hr { border: none; border-top: 1px solid #eef1f6; margin: 18px 0; }
    Markdown 正文的样式统一在全局 style.css 的 .md-body 里。 */
 .empty-content { color: #a8b2c1; }
 
+/* ---- 正文底部的标签 ---- */
+.tag-list {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  margin-top: 26px; padding-top: 16px;
+  border-top: 1px dashed #eef1f6;
+}
+.tag-list-label {
+  font-size: 12px; color: #9aa5b1; margin-right: 2px;
+}
+.tag-chip {
+  display: inline-block;
+  padding: 4px 10px; border-radius: 8px;
+  background: #f0fdfa; color: #0f766e;
+  font-size: 12px; line-height: 1.5;
+  cursor: pointer; transition: all 0.15s;
+}
+.tag-chip:hover { background: #ccfbf1; transform: translateY(-1px); }
+
 /* 评论区 */
 .comments { padding: 24px 28px; }
 
@@ -761,7 +895,25 @@ hr { border: none; border-top: 1px solid #eef1f6; margin: 18px 0; }
 .input-row .send:hover { background: #0d9488; }
 .input-row .send:disabled { opacity: 0.6; cursor: not-allowed; }
 
-.c-msg { color: #e74c3c; font-size: 13px; margin-bottom: 12px; text-align: center; }
+/* 提示条: 成功 = 柔和青绿; 失败才用红色 (.err) */
+.c-msg {
+  color: #0f766e;
+  background: #f0fdfa;
+  border: 1px solid #ccfbf1;
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  line-height: 1.6;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  text-align: center;
+}
+.c-msg.err {
+  color: #c0392b;
+  background: #fef2f2;
+  border-color: #fee2e2;
+}
 
 /* ---- 评论条目 ---- */
 .c-block { border-top: 1px solid #f4f7f6; }

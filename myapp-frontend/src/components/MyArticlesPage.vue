@@ -42,6 +42,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getMyArticles, deleteArticle, updateArticle } from '../services/authApi.js'
+import { goLogin } from '../utils/auth.js'
 
 const articles = ref([])
 const loading = ref(false)
@@ -54,7 +55,7 @@ const goDetail = (id) => router.push(`/article/${id}`)   // 点标题 → 像读
 
 const loadArticles = async () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
   loading.value = true
   try {
     const res = await getMyArticles(token)
@@ -62,7 +63,7 @@ const loadArticles = async () => {
   } catch (err) {
     if (err.response && err.response.status === 401) {
       localStorage.removeItem('token')
-      router.push('/login')
+      goLogin(router)
     } else {
       msg.value = '获取失败：' + err.message
     }
@@ -96,7 +97,7 @@ onMounted(loadArticles)
 </script>
 
 <style scoped>
-.page { max-width: 820px; padding-top: 24px; }
+.page { max-width: 1080px; padding-top: 24px; }
 
 .head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 .head h2 { font-size: 20px; }

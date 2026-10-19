@@ -23,13 +23,15 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { login } from '../services/authApi.js'
+import { safeRedirect } from '../utils/auth.js'
 
 const username = ref('')
 const password = ref('')
 const msg = ref('')
 const router = useRouter()
+const route = useRoute()
 
 const handleLogin = async () => {
   if (!username.value || !password.value) {
@@ -40,7 +42,10 @@ const handleLogin = async () => {
     const res = await login(username.value, password.value)
     if (res.data.token) {
       localStorage.setItem('token', res.data.token)   // 存 token
-      router.push('/me')                              // 回"我的"
+      // ★ 从哪来回哪去: /login?redirect=/article/23 → 登录后回文章页
+      //   没有 redirect (用户自己点"登录") → 回"我的"
+      //   safeRedirect 会挡掉外站地址
+      router.replace(safeRedirect(route.query.redirect))
     } else {
       msg.value = res.data.error
     }

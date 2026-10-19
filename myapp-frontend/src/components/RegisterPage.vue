@@ -15,19 +15,28 @@
     <p class="msg">{{ msg }}</p>
 
     <p class="switch">
-      已经有账号了？<router-link to="/login">去登录</router-link>
+      已经有账号了？<router-link :to="loginLink">去登录</router-link>
     </p>
     <p class="switch"><router-link to="/home">← 先逛逛首页</router-link></p>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { register } from '../services/authApi.js'
 
 const username = ref('')
 const password = ref('')
 const msg = ref('')
+const route = useRoute()
+
+// 从登录页跳到注册页时, redirect 参数要跟着带过去,
+// 不然"关注 → 登录 → 去注册 → 登录回来"这条链会断
+const loginLink = computed(() => {
+  const r = route.query.redirect
+  return r ? { path: '/login', query: { redirect: String(r) } } : '/login'
+})
 
 const handleRegister = async () => {
   if (!username.value || !password.value) {

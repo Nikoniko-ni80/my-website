@@ -247,3 +247,55 @@ class CommentLike(Base):
     #      因为删一条评论时, 数据库要找"哪些点赞指向它", 没索引就得全表扫。
     #   而这个"为删除而建的索引", 正好就是"数点赞量"要用的 —— 一举两得。
     #   验证: SHOW INDEX FROM comment_likes;
+
+
+# ============================================================
+# 标签 (第 5B 步)
+# ============================================================
+class Tag(Base):
+    """标签本身 —— 一个可以被多篇文章【共享】的实体。
+
+    为什么不直接在 articles 存一列 "MySQL,Redis"?
+      ① 查不准: LIKE '%Redis%' 会把 "RedisCluster" 也扫进来
+      ② 改不动: 把 "Redis" 改名成 "Redis 7", 要改 N 篇文章
+      ③ 数不了: "这个标签下有几篇" 得把字符串读出来在代码里数
+      ④ 加不了属性: 标签想加个描述/颜色, 没地方放
+
+    所以标签先是一张表 —— 有 id, 才能被引用、被统计、被改名。
+    """
+    __tablename__ = "tags"
+
+    id   = Column(Integer, primary_key=True)
+    name = Column(String(30), unique=True, nullable=False)
+    # ★ unique 顺便建了索引 → "按名字找标签" 走它
+    # ★ MySQL 默认排序规则(_ci)不区分大小写 →
+    #     "Redis" 和 "redis" 会撞唯一约束, 自动当成同一个标签
+
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class ArticleTag(Base):
+    """文章 ↔ 标签 的中间表（多对多）。
+
+    一行 = 一个"配对": 某篇文章贴了某个标签。
+
+    为什么必须单独一张表?
+      一列只能装一个值 —— 文章有多个标签, 一列装不下。
+      而标签又要被多篇文章共享 → 关系升级成多对多 → 必须中间表。
+
+    ★ 两个索引, 正好对应"从左到右 / 从右到左":
+        ① (article_id, tag_id)  来自唯一约束
+           → 查"这篇文章有哪些标签"
+        ② (tag_id)              来自外键(MySQL 自动建)
+           → 查"这个标签下有哪些文章"
+    """
+    __tablename__ = "article_tags"
+    __table_args__ = (
+        UniqueConstraint("article_id", "tag_id", name="uq_article_tag"),   # ★ 同一篇不能重复贴同一个标签
+    )
+
+    id         = Column(Integer, primary_key=True)
+    # 删文章 → 它的标签关联自动消失; 标签本身还在
+    article_id = Column(Integer, ForeignKey("articles.id", ondelete="CASCADE"), nullable=False)
+    # 删标签 → 关联消失; 文章本身不动
+    tag_id     = Column(Integer, ForeignKey("tags.id", ondelete="CASCADE"), nullable=False)

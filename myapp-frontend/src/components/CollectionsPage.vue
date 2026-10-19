@@ -71,14 +71,14 @@
             >
               <!-- 没有真封面图, 就用渐变色块 + emoji 顶替 (跟首页一个套路) -->
               <div class="cover" :class="coverOf(i)">
-                <span class="cover-emoji">{{ emojiOf(a.author) }}</span>
+                <span class="cover-emoji"><IconDoc /></span>
                 <span class="cover-tag">{{ a.author }}</span>
               </div>
 
               <div class="art-info">
                 <p class="art-title">{{ a.title }}</p>
                 <div class="art-meta">
-                  <span class="avatar" :class="coverOf(i)">{{ emojiOf(a.author) }}</span>
+                  <span class="avatar" :class="coverOf(i)"><IconUser /></span>
                   <!-- ★ 作者名可点 → 个人主页。.stop 防止顺带触发卡片的"进文章详情" -->
                   <span class="author-link" @click.stop="goUser(a.user_id)">{{ a.author }}</span>
                   <span>· 收藏于 {{ fmtDate(a.favorited_at) }}</span>
@@ -136,6 +136,7 @@ import {
   getCollectionArticles
 } from '../services/authApi.js'
 import Modal from './Modal.vue'
+import { goLogin } from '../utils/auth.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -185,12 +186,6 @@ const goUser = (id) => { if (id) router.push(`/user/${id}`) }   // 点作者名 
 // ---- 封面装饰 (跟首页 HomePage 一个套路) ----
 const covers = ['cover-1', 'cover-2', 'cover-3', 'cover-4', 'cover-5', 'cover-6']
 const coverOf = (i) => covers[i % covers.length]
-const emojiOf = (name) => {
-  const pool = ['🐦', '🐕', '🐳', '🐱', '🦊', '🐼']
-  let n = 0
-  for (const ch of (name || '?')) n += ch.charCodeAt(0)
-  return pool[n % pool.length]
-}
 
 // "2026-09-14 10:30:00" → "9月14日"
 const fmtDate = (s) => {
@@ -217,7 +212,7 @@ const shownArticles = computed(() => {
 const handleErr = (err) => {
   if (err.response && err.response.status === 401) {
     localStorage.removeItem('token')
-    router.push('/login')
+    goLogin(router)
   } else {
     msg.value = '操作失败：' + err.message
   }
@@ -225,7 +220,7 @@ const handleErr = (err) => {
 
 const getToken = () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return null }
+  if (!token) { goLogin(router); return null }
   return token
 }
 
@@ -436,7 +431,11 @@ onMounted(loadCollections)
   height: 118px; position: relative;
   display: flex; align-items: center; justify-content: center;
 }
-.cover-emoji { font-size: 40px; }
+.cover-emoji {
+  width: 52px;
+  height: 52px;
+  color: rgba(15, 118, 110, 0.42);
+}
 .cover-tag {
   position: absolute; left: 10px; bottom: 9px;
   padding: 2px 8px; border-radius: 6px;

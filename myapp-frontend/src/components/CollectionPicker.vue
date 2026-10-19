@@ -49,6 +49,7 @@ import { useRouter } from 'vue-router'
 import {
   getCollectionsOfArticle, addFavorite, removeFavorite, createCollection
 } from '../services/authApi.js'
+import { goLogin } from '../utils/auth.js'
 
 // props: 父组件(文章详情页)传进来的文章 id, 已经 Number() 过了
 const props = defineProps({
@@ -76,7 +77,7 @@ const emitChanged = () => {
 // 统一拿 token (照抄 MyArticlesPage.vue 的写法)
 const getToken = () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return null }
+  if (!token) { goLogin(router); return null }
   return token
 }
 
@@ -84,7 +85,7 @@ const getToken = () => {
 const handleErr = (err) => {
   if (err.response && err.response.status === 401) {
     localStorage.removeItem('token')       // token 失效 → 清掉再跳登录
-    router.push('/login')
+    goLogin(router)
   } else {
     msg.value = '操作失败：' + err.message
   }

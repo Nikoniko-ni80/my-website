@@ -51,7 +51,8 @@
 
     <!-- 快捷入口 -->
     <div class="quick">
-      <div class="quick-item card">
+      <!-- ★ 以前是个死元素, 现在点得动了 → 跳 /hot 热榜页 -->
+      <div class="quick-item card hoverable" @click="$router.push('/hot')">
         <span class="q-ico">🔥</span><span>热度排行榜</span>
       </div>
       <div class="quick-item card">
@@ -75,7 +76,7 @@
           @click="goDetail(a.id)"
         >
           <div class="art-cover" :class="coverOf(i)">
-            <span class="art-emoji">{{ emojiOf(a.author) }}</span>
+            <span class="art-emoji"><IconDoc /></span>
           </div>
           <div class="art-info">
             <p class="art-title">
@@ -86,7 +87,7 @@
             <!-- 摘要要把 Markdown 符号去掉, 不然卡片上会显示 "## **标题**" 这种源码 -->
             <p class="art-sum">{{ stripMarkdown(a.content) || '（无内容）' }}</p>
             <div class="art-meta">
-              <span class="avatar" :class="coverOf(i)">{{ emojiOf(a.author) }}</span>
+              <span class="avatar" :class="coverOf(i)"><IconUser /></span>
               <!-- ★ 作者名可点 → 跳个人主页。.stop 防止同时触发外面卡片的"进文章详情" -->
               <span class="author clickable" @click.stop="$router.push(`/user/${a.user_id}`)">
                 {{ a.author }}
@@ -203,7 +204,7 @@ const articles = ref([])
 const page = ref(1)          // 当前第几页
 const pages = ref(0)         // 一共几页 (后端算好告诉我们的)
 const total = ref(0)         // 一共几篇
-const size = 8               // 每页几篇 (4 列 × 2 行)
+const size = 12              // 每页几篇 (4 列 × 3 行)
 const loading = ref(false)
 
 // 页码按钮列表: 有几页就显示几个
@@ -213,12 +214,6 @@ const pageList = computed(() => Array.from({ length: pages.value }, (_, i) => i 
 // ---- 封面装饰 (纯样式, 没有真封面图) ----
 const covers = ['cover-1', 'cover-2', 'cover-3', 'cover-4', 'cover-5', 'cover-6']
 const coverOf = (i) => covers[i % covers.length]
-const emojiOf = (name) => {
-  const pool = ['🐦', '🐕', '🐳', '🐱', '🦊', '🐼']
-  let n = 0
-  for (const ch of (name || '?')) n += ch.charCodeAt(0)
-  return pool[n % pool.length]
-}
 
 const goDetail = (id) => router.push(`/article/${id}`)
 
@@ -428,7 +423,13 @@ onUnmounted(stopAuto)
   position: relative; height: 130px;
   display: flex; align-items: center; justify-content: center;
 }
-.art-emoji { font-size: 44px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.12)); }
+/* 封面上那个文档线框图标
+   (渐变底色很浅, 所以用半透明墨绿, 别用白色 —— 白字在白底上看不见) */
+.art-emoji {
+  width: 58px;
+  height: 58px;
+  color: rgba(15, 118, 110, 0.42);
+}
 .art-info { padding: 14px; }
 .art-title {
   font-size: 15px; line-height: 1.45; height: 44px; overflow: hidden;

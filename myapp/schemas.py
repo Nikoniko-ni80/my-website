@@ -67,6 +67,9 @@ class ArticleIn(BaseModel):
     # ★ 分类: 空字符串 = 没分类。
     #   允许空是为了兼容从前端还不传这个字段的老代码, 而且"没分类"是个合法状态。
     category: str = ""
+    # ★ 标签: 一串标签名, 空列表 = 没标签
+    #   后端会做规范化 + 查重 + 自动创建 (见 routers/tags.py)
+    tags: list[str] = []
 
 # ---------- 返回给前端的文章 ----------
 class ArticleOut(BaseModel):

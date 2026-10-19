@@ -40,7 +40,7 @@
 <style scoped>
 /* PC: AI 页居中收窄, 占满可视高度 */
 .ai-page {
-  max-width: 760px;
+  max-width: 900px;
   display: flex;
   flex-direction: column;
   height: calc(100vh - 64px);

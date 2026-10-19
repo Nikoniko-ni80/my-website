@@ -37,6 +37,12 @@ export const getPublicArticles = (page = 1, size = 9, keyword = '', category = '
   })
 }
 
+// 热榜 (不用登录): GET /articles/hot?limit=10
+// 后端已经按"热度 ÷ 时间衰减"排好序了, 前端直接渲染就行
+export const getHotArticles = (limit = 10) => {
+  return api.get('/articles/hot', { params: { limit } })
+}
+
 // 看【某一篇公开文章】(不用登录): GET /articles/{id}
 // → {..., like_count, liked_by_me}
 // ⚠️ 带上 token 的话, 后端才知道 liked_by_me (没带就一律 false)
@@ -122,9 +128,10 @@ export const getMyArticle = (token, id) => {
   })
 }
 
-// 发布文章: POST /articles (带 token, 传 title + content + is_public)
-export const addArticle = (token, title, content, isPublic, category = '') => {
-  return api.post('/articles', { title, content, is_public: isPublic, category }, {
+// 发布文章: POST /articles (带 token, 传 title + content + is_public + category + tags)
+// tags 是一串标签名, 例如 ["Redis", "缓存"]
+export const addArticle = (token, title, content, isPublic, category = '', tags = []) => {
+  return api.post('/articles', { title, content, is_public: isPublic, category, tags }, {
     headers: { Authorization: `Bearer ${token}` }
   })
 }
@@ -136,10 +143,27 @@ export const deleteArticle = (token, id) => {
   })
 }
 
-// 改文章: PUT /articles/{id} (带 token, 传新 title + content + is_public)
-export const updateArticle = (token, id, title, content, isPublic, category = '') => {
-  return api.put(`/articles/${id}`, { title, content, is_public: isPublic, category }, {
+// 改文章: PUT /articles/{id} (带 token, 传新 title + content + is_public + category + tags)
+export const updateArticle = (token, id, title, content, isPublic, category = '', tags = []) => {
+  return api.put(`/articles/${id}`, { title, content, is_public: isPublic, category, tags }, {
     headers: { Authorization: `Bearer ${token}` }
+  })
+}
+
+
+// ================= 标签相关 =================
+
+// 标签联想: GET /tags?keyword=re  (不用登录)
+// 返回 [{id, name, count}, ...]
+export const getTags = (keyword = '', limit = 10) => {
+  return api.get('/tags', { params: { keyword, limit } })
+}
+
+// 标签页: GET /tags/{name}/articles  (不用登录)
+// 返回形状跟 getPublicArticles 一样: {items, total, page, size, pages, tag}
+export const getArticlesByTag = (name, page = 1, size = 10) => {
+  return api.get(`/tags/${encodeURIComponent(name)}/articles`, {
+    params: { page, size }
   })
 }
 

@@ -11,7 +11,7 @@
 
     <div v-else class="list">
       <div v-for="(a, i) in items" :key="a.id" class="item card">
-        <div class="cover" :class="coverOf(i)">{{ emojiOf(a.author) }}</div>
+        <div class="cover" :class="coverOf(i)"><IconDoc /></div>
 
         <div class="art-text">
           <p class="t">
@@ -52,6 +52,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getHistory, clearHistory } from '../services/authApi.js'
 import Modal from './Modal.vue'
+import { goLogin } from '../utils/auth.js'
 
 const router = useRouter()
 
@@ -66,12 +67,6 @@ const goUser = (id) => { if (id) router.push(`/user/${id}`) }   // 点作者名 
 // ---- 封面装饰 (跟首页/收藏页一个套路, 纯样式) ----
 const covers = ['cover-1', 'cover-2', 'cover-3', 'cover-4', 'cover-5', 'cover-6']
 const coverOf = (i) => covers[i % covers.length]
-const emojiOf = (name) => {
-  const pool = ['🐦', '🐕', '🐳', '🐱', '🦊', '🐼']
-  let n = 0
-  for (const ch of (name || '?')) n += ch.charCodeAt(0)
-  return pool[n % pool.length]
-}
 
 // 把时间变成"人话": 刚刚 / 5分钟前 / 3小时前 / 2天前 / 9月29日
 const fmtTime = (s) => {
@@ -97,7 +92,7 @@ const fmtTime = (s) => {
 const handleErr = (err) => {
   if (err.response && err.response.status === 401) {
     localStorage.removeItem('token')
-    router.push('/login')
+    goLogin(router)
   } else {
     msg.value = '操作失败：' + err.message
   }
@@ -105,7 +100,7 @@ const handleErr = (err) => {
 
 const load = async () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
   loading.value = true
   try {
     const res = await getHistory(token)
@@ -119,7 +114,7 @@ const load = async () => {
 
 const doClear = async () => {
   const token = localStorage.getItem('token')
-  if (!token) { router.push('/login'); return }
+  if (!token) { goLogin(router); return }
   try {
     const res = await clearHistory(token)
     if (res.data.error) { msg.value = res.data.error; return }
@@ -136,7 +131,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page { max-width: 820px; padding-top: 24px; }
+.page { max-width: 1080px; padding-top: 24px; }
 
 .head {
   display: flex; align-items: center; justify-content: space-between;
@@ -156,7 +151,8 @@ onMounted(load)
 }
 .cover {
   width: 54px; height: 54px; border-radius: 12px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center; font-size: 24px;
+  display: flex; align-items: center; justify-content: center;
+  color: rgba(15, 118, 110, 0.45);
 }
 
 .art-text { flex: 1; min-width: 0; }

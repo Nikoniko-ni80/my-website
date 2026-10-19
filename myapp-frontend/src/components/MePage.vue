@@ -4,7 +4,7 @@
     <div class="user-head" @click="go(user ? `/user/${user.id}` : '/login')">
       <div class="head-avatar cover-3">
         <img v-if="user && user.avatar" :src="user.avatar" alt="" />
-        <span v-else>{{ user ? '🐦' : '?' }}</span>
+        <span v-else><IconUser /></span>
       </div>
       <div class="head-info">
         <template v-if="user">
@@ -58,6 +58,22 @@
       </div>
       <div class="l-item" @click="showAbout = true">
         <span>关于</span><span class="arrow">›</span>
+      </div>
+    </div>
+
+    <!-- ===== 最近浏览 (把页面下半部分填满, 也是真能用上的入口) ===== -->
+    <div v-if="recent.length" class="recent card">
+      <div class="recent-head">
+        <span class="r-title">🕐 最近浏览</span>
+        <span class="r-more" @click="go('/history')">查看全部 ›</span>
+      </div>
+      <div
+        v-for="a in recent" :key="a.id"
+        class="r-item"
+        @click="go(`/article/${a.id}`)"
+      >
+        <span class="r-name">{{ a.title }}</span>
+        <span class="r-author">{{ a.author }}</span>
       </div>
     </div>
 
@@ -123,11 +139,13 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getMe, sendFeedback } from '../services/authApi.js'
+import { getMe, sendFeedback, getHistory } from '../services/authApi.js'
 import Modal from './Modal.vue'
+
 
 const user = ref(null)
 const msg = ref('')
+const recent = ref([])          // 最近浏览的 5 篇
 const router = useRouter()
 
 // ---- 建议反馈 ----
@@ -153,6 +171,15 @@ onMounted(async () => {
     if (err.response && err.response.status === 401) {
       localStorage.removeItem('token')    // token 失效 → 清掉, 回到未登录态
     }
+  }
+
+  // 最近浏览: 拿 5 条。
+  // ★ 单独一个 try —— 历史拿不到不能让整页变"未登录"
+  try {
+    const h = await getHistory(token)
+    recent.value = (h.data || []).slice(0, 5)
+  } catch (e) {
+    recent.value = []
   }
 })
 
@@ -200,8 +227,8 @@ const submitFeedback = async () => {
 </script>
 
 <style scoped>
-/* PC: "我的"页内容居中收窄 */
-.page { max-width: 760px; }
+/* PC: "我的"页内容居中收窄 (单栏; 稍微放宽一点, 免得两边太空) */
+.page { max-width: 880px; }
 
 /* 顶部用户区 */
 .user-head {
@@ -210,8 +237,9 @@ const submitFeedback = async () => {
   box-shadow: 0 2px 10px rgba(20, 184, 166, 0.06); margin-bottom: 14px;
 }
 .head-avatar {
-  width: 52px; height: 52px; border-radius: 50%; flex-shrink: 0; overflow: hidden;
+  width: 60px; height: 60px; border-radius: 50%; flex-shrink: 0; overflow: hidden;
   display: flex; align-items: center; justify-content: center; font-size: 24px;
+  color: rgba(15, 118, 110, 0.55);
 }
 .head-avatar img { width: 100%; height: 100%; object-fit: cover; }
 /* 整块可点 → 手感更像"卡片可点" */
@@ -219,7 +247,7 @@ const submitFeedback = async () => {
 /* min-width: 0 不能省 —— 里面装的是用户名和简介(用户输入的),
    不写的话长用户名会把右边那个箭头挤出容器 (见 style.css 顶部那段说明) */
 .head-info { flex: 1; min-width: 0; }
-.head-info h2 { font-size: 16px; }
+.head-info h2 { font-size: 18px; }
 .head-info p { font-size: 12px; color: #7b8794; margin-top: 3px; }
 .arrow { color: #c3ccd8; font-size: 20px; text-decoration: none; }
 
@@ -229,7 +257,7 @@ const submitFeedback = async () => {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
   font-size: 12px; color: #4b5563; cursor: pointer;
 }
-.q-ico { font-size: 22px; }
+.q-ico { font-size: 25px; }
 
 /* 继续阅读 */
 .continue { display: flex; align-items: center; gap: 12px; padding: 14px 16px; margin-bottom: 14px; }
@@ -241,10 +269,34 @@ const submitFeedback = async () => {
 .list { overflow: hidden; }
 .l-item {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 15px 16px; font-size: 14px; cursor: pointer;
+  padding: 16px 18px; font-size: 14px; cursor: pointer;
   border-bottom: 1px solid #f2f5f9;
 }
 .l-item:last-child { border-bottom: none; }
+
+/* ---- 最近浏览 ---- */
+.recent { padding: 16px 18px; margin-top: 14px; }
+.recent-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.r-title { font-size: 13px; font-weight: 600; color: #374151; }
+.r-more { font-size: 12px; color: #14b8a6; cursor: pointer; }
+.r-more:hover { text-decoration: underline; }
+
+.r-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 0; border-bottom: 1px dashed #eef1f6;
+  cursor: pointer;
+}
+.r-item:last-child { border-bottom: none; }
+.r-name {
+  font-size: 13px; color: #4b5563; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+  transition: color 0.15s;
+}
+.r-item:hover .r-name { color: #0f766e; }
+.r-author { flex-shrink: 0; font-size: 11px; color: #9aa5b1; }
 
 .msg { text-align: center; color: #14b8a6; font-size: 13px; margin-top: 14px; }
 

@@ -5,7 +5,14 @@ import './style.css'
 import 'highlight.js/styles/atom-one-dark.css'
 import App from './App.vue'
 import router from './router/index.js'
+import IconUser from './components/IconUser.vue'
+import IconDoc from './components/IconDoc.vue'
 
 const app = createApp(App)
 app.use(router)
+
+// 两个中性图标在 7 个组件里都要用, 注册成【全局组件】省得每个文件都 import
+app.component('IconUser', IconUser)
+app.component('IconDoc', IconDoc)
+
 app.mount('#app')

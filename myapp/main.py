@@ -22,16 +22,32 @@
 #   结果: 前端看到的地址一个都没变 —— 还是 POST /register、GET /my/collections。
 #   这次重构纯粹是文件层面的搬家, 行为一模一样。
 # ============================================================
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import users, articles, collections, feedback, history, follows
+from routers import users, articles, collections, feedback, history, follows, tags
+from tasks import start_background_tasks
 # ⚠️ 这行跟上面两行【不一样】: 上面是别人写的库(pip 装的), 这个是【我自己写的文件夹】
 #   一个文件夹 + 里面有 __init__.py  =  包  =  可以被 import
 #   所以 users 就是 routers/users.py 那个文件; 用它的东西要写 users.router
 #   (能找得到是因为: 你从 myapp/ 目录启动, 所以 myapp/ 在 Python 的查找路径里)
 
-app = FastAPI()
+# ---------- 启动钩子: 服务起来的那一刻, 顺手把后台线程点着 ----------
+# lifespan 是 FastAPI 的"生命周期"开关:
+#   服务启动 → 执行 yield 上面的代码
+#   服务关闭 → 执行 yield 下面的代码 (这里没写, 因为 daemon 线程会自己死)
+#
+# (老写法是 @app.on_event("startup") —— 还能用, 但官方已标为不推荐。
+#  新写法就是下面这个 lifespan, FastAPI 文档现在默认都用它。)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    start_background_tasks()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 # 允许跨域 (CORS): 前端(5173端口) 跟后端(8000端口) 不同源, 浏览器默认禁止跨端口请求,
 # 加了这段中间件, 后端就"允许"前端的请求了
@@ -52,3 +68,4 @@ app.include_router(collections.router)
 app.include_router(feedback.router)
 app.include_router(history.router)
 app.include_router(follows.router)
+app.include_router(tags.router)
