@@ -3,7 +3,7 @@
     <!-- 顶部: 头像 + 登录状态 (点一下 → 看我自己的个人主页) -->
     <div class="user-head" @click="go(user ? `/user/${user.id}` : '/login')">
       <div class="head-avatar cover-3">
-        <img v-if="user && user.avatar" :src="user.avatar" alt="" />
+        <img v-if="user && user.avatar" :src="mediaUrl(user.avatar)" alt="" />
         <span v-else><IconUser /></span>
       </div>
       <div class="head-info">
@@ -19,6 +19,20 @@
       <span class="arrow">›</span>
     </div>
 
+    <!-- 余额 (登录后才显示) -->
+    <div v-if="user" class="wallet card">
+      <div class="w-left">
+        <p class="w-label">账户余额</p>
+        <p class="w-value">¥{{ (balance / 100).toFixed(2) }}</p>
+      </div>
+      <div class="w-right">
+        <span v-if="walletMsg" class="w-msg">{{ walletMsg }}</span>
+        <button class="w-btn" :disabled="rechargeBusy" @click="doRecharge">
+          {{ rechargeBusy ? '充值中…' : '充值 ¥100' }}
+        </button>
+      </div>
+    </div>
+
     <!-- 四宫格 -->
     <div class="quad card">
       <div class="q-item" @click="go('/my-articles')">
@@ -30,7 +44,7 @@
       <div class="q-item" @click="go('/history')">
         <span class="q-ico">🕐</span><span>浏览历史</span>
       </div>
-      <div class="q-item">
+      <div class="q-item" @click="go('/notifications')">
         <span class="q-ico">💬</span><span>我的消息</span>
       </div>
     </div>
@@ -74,6 +88,22 @@
       >
         <span class="r-name">{{ a.title }}</span>
         <span class="r-author">{{ a.author }}</span>
+      </div>
+    </div>
+
+    <!-- ===== 我买过的付费文章 ===== -->
+    <div v-if="purchases.length" class="recent card">
+      <div class="recent-head">
+        <span class="r-title">🔓 我的已购</span>
+        <span class="r-more">{{ purchases.length }} 篇</span>
+      </div>
+      <div
+        v-for="a in purchases" :key="a.article_id"
+        class="r-item"
+        @click="go(`/article/${a.article_id}`)"
+      >
+        <span class="r-name">{{ a.title }}</span>
+        <span class="r-author">已解锁</span>
       </div>
     </div>
 
@@ -139,7 +169,8 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { getMe, sendFeedback, getHistory } from '../services/authApi.js'
+import { getMe, sendFeedback, getHistory, getBalance, recharge, getMyPurchases } from '../services/authApi.js'
+import { mediaUrl } from '../utils/media.js'
 import Modal from './Modal.vue'
 
 
@@ -147,6 +178,42 @@ const user = ref(null)
 const msg = ref('')
 const recent = ref([])          // 最近浏览的 5 篇
 const router = useRouter()
+
+// ---- 余额 / 已购 ----
+const balance = ref(0)          // 单位: 分
+const rechargeBusy = ref(false)
+const walletMsg = ref('')
+const purchases = ref([])
+
+const loadWallet = async (token) => {
+  try {
+    const b = await getBalance(token)
+    balance.value = b.data.balance || 0
+  } catch (e) { balance.value = 0 }
+
+  try {
+    const p = await getMyPurchases(token)
+    purchases.value = p.data.items || []
+  } catch (e) { purchases.value = [] }
+}
+
+const doRecharge = async () => {
+  const token = localStorage.getItem('token')
+  if (!token) return
+  rechargeBusy.value = true
+  walletMsg.value = ''
+  try {
+    const r = await recharge(token, 10000)     // 100 元 = 10000 分
+    if (r.data.error) { walletMsg.value = r.data.error; return }
+    balance.value = r.data.balance
+    walletMsg.value = '充值成功'
+    setTimeout(() => { walletMsg.value = '' }, 2000)
+  } catch (e) {
+    walletMsg.value = '充值失败'
+  } finally {
+    rechargeBusy.value = false
+  }
+}
 
 // ---- 建议反馈 ----
 const showFeedback = ref(false)   // 弹窗开不开
@@ -167,6 +234,7 @@ onMounted(async () => {
   try {
     const res = await getMe(token)
     user.value = res.data
+    await loadWallet(token)               // 余额 + 已购
   } catch (err) {
     if (err.response && err.response.status === 401) {
       localStorage.removeItem('token')    // token 失效 → 清掉, 回到未登录态
@@ -356,4 +424,21 @@ const submitFeedback = async () => {
 .a-row > b { color: #4b5563; font-weight: 500; }
 
 .a-note { font-size: 12px; color: #a8b2c1; margin-top: 16px; }
+
+/* ===== 余额 ===== */
+.wallet {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 20px; margin-top: 14px;
+}
+.w-label { font-size: 12px; color: #9aa5b1; }
+.w-value { font-size: 24px; font-weight: 800; color: #0f766e; margin-top: 2px; }
+.w-right { display: flex; align-items: center; gap: 10px; }
+.w-msg { font-size: 12px; color: #14b8a6; }
+.w-btn {
+  padding: 8px 16px; border: none; border-radius: 9px;
+  background: #14b8a6; color: #fff; font-size: 13px;
+  cursor: pointer; font-family: inherit;
+}
+.w-btn:hover:not(:disabled) { background: #0d9488; }
+.w-btn:disabled { opacity: .5; cursor: default; }
 </style>

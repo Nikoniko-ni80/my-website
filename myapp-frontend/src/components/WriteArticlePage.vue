@@ -15,12 +15,49 @@
           <input type="checkbox" v-model="isPublic" />
           <span>公开</span>
         </label>
+        <!-- ★ 付费: 勾上后填价格 (单位元, 提交时转成分) -->
+        <label class="pub">
+          <input type="checkbox" v-model="isPaid" />
+          <span>付费</span>
+        </label>
+        <label v-if="isPaid" class="price-wrap">
+          ¥
+          <input
+            class="price-input"
+            v-model="priceYuan"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="0.00"
+          />
+        </label>
         <button class="done" @click="handleDone">完成</button>
       </div>
     </header>
 
     <!-- 标题 -->
     <input class="title-input" v-model="title" placeholder="请输入标题…" />
+
+    <!-- ===== 封面 ===== -->
+    <div class="cover-row">
+      <div class="cover-box">
+        <img v-if="coverUrl" :src="mediaUrl(coverUrl)" alt="" />
+        <span v-else class="cover-tip">封面（可不填）</span>
+      </div>
+      <div class="cover-actions">
+        <label class="cover-pick">
+          {{ coverBusy ? '上传中…' : (coverUrl ? '换一张' : '上传封面') }}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            hidden
+            @change="onPickCover"
+          />
+        </label>
+        <button v-if="coverUrl" class="cover-rm" type="button" @click="coverUrl = ''">移除</button>
+        <span class="cover-hint">不传就用默认渐变</span>
+      </div>
+    </div>
 
     <!-- ===== 标签 ===== -->
     <div class="tag-row">
@@ -60,6 +97,32 @@
       <button v-for="t in tools" :key="t.label" :title="t.tip" @click="applyTool(t)">
         {{ t.label }}
       </button>
+
+      <!-- ★ 插入图片: 上传后自动插入 Markdown -->
+      <button type="button" title="插入图片" :disabled="imgBusy" @click="pickImage">
+        {{ imgBusy ? '…' : '🖼' }}
+      </button>
+      <input
+        ref="imgInput"
+        type="file"
+        accept="image/png,image/jpeg,image/gif,image/webp"
+        hidden
+        @change="onPickImage"
+      />
+
+      <!-- ★ 导入 Markdown：md + 图片一起选 -->
+      <button type="button" title="导入 Markdown（连同图片一起选）" :disabled="mdImporting" @click="pickMd">
+        {{ mdImporting ? '…' : '📥' }}
+      </button>
+      <input
+        ref="mdInput"
+        type="file"
+        multiple
+        accept=".md,.markdown,image/png,image/jpeg,image/gif,image/webp"
+        hidden
+        @change="onImportMd"
+      />
+
       <span class="tip">支持 Markdown · 右边实时预览</span>
     </div>
 
@@ -69,6 +132,9 @@
         ref="editorRef"
         class="pane editor"
         v-model="content"
+        @paste="handlePaste"
+        @drop="handleDrop"
+        @dragover="handleDragOver"
         placeholder="开始写吧…
 
 试试这些:
@@ -96,8 +162,9 @@ print('代码块')
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getMyArticle, addArticle, updateArticle, getTags } from '../services/authApi.js'
+import { getMyArticle, addArticle, updateArticle, getTags, uploadFile } from '../services/authApi.js'
 import { renderMarkdown } from '../utils/markdown.js'
+import { mediaUrl } from '../utils/media.js'
 import { goLogin } from '../utils/auth.js'
 
 const route = useRoute()
@@ -109,6 +176,28 @@ const isEdit = !!editId
 const title = ref('')
 const content = ref('')
 const isPublic = ref(false)
+// ★ 付费: priceYuan 是输入框里的"元", 提交时 ×100 转成"分"
+const isPaid = ref(false)
+const priceYuan = ref('')
+
+// 封面
+const coverUrl = ref('')
+const coverBusy = ref(false)
+const onPickCover = async (e) => {
+  const file = e.target.files && e.target.files[0]
+  e.target.value = ''
+  if (!file) return
+  coverBusy.value = true
+  try {
+    const res = await uploadFile(localStorage.getItem('token'), file)
+    if (res.data.error) { msg.value = res.data.error; return }
+    coverUrl.value = res.data.url
+  } catch (err) {
+    msg.value = '封面上传失败：' + err.message
+  } finally {
+    coverBusy.value = false
+  }
+}
 // ★ 分类: 空字符串 = 未分类
 // ⚠️ 这个列表要跟后端 schemas.py 里的 CATEGORIES 一致!
 const CATEGORIES = ['前端', '后端', 'AI', '其他']
@@ -202,6 +291,142 @@ const tools = [
 // 在【光标位置】插入一段文字
 //   选中了东西 → 把选中的包起来   (比如选中"你好" 点 B → **你好**)
 //   没选中     → 插入占位符, 并把占位符选中 (方便你直接打字替换)
+// ---------- 导入 Markdown（md + 本地图片） ----------
+const mdInput = ref(null)
+const mdImporting = ref(false)
+const pickMd = () => { if (mdInput.value) mdInput.value.click() }
+
+const onImportMd = async (e) => {
+  const files = Array.from(e.target.files || [])
+  e.target.value = ''
+
+  const md = files.find(f => /\.(md|markdown)$/i.test(f.name))
+  if (!md) { msg.value = '请选择一个 .md 文件'; return }
+  const imgs = files.filter(f => f.type && f.type.startsWith('image/'))
+
+  if (content.value.trim() && !confirm('导入会替换当前正文，继续？')) return
+
+  mdImporting.value = true
+  try {
+    // ① 图片逐个上传，记下 "文件名 → /uploads/xxx.png"
+    const map = {}
+    for (const f of imgs) {
+      const res = await uploadFile(localStorage.getItem('token'), f)
+      if (res.data.error) { msg.value = res.data.error; continue }
+      map[f.name] = res.data.url
+    }
+
+    // ② 读 md，替换图片路径
+    let text = await md.text()
+    const missing = []
+    text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (all, alt, raw) => {
+      const src = raw.trim().replace(/^<|>$/g, '')
+      // 网络地址、base64、已经上传过的，原样保留
+      if (/^(https?:|data:|\/uploads\/)/i.test(src)) return all
+      const name = src.split(/[\\/]/).pop().split(/[?#]/)[0]
+      const url = map[name]
+      if (!url) { missing.push(name); return all }
+      return `![${alt}](${url})`
+    })
+
+    content.value = text
+
+    // ③ 标题：没填就用第一行 # 标题，再不行用文件名
+    if (!title.value.trim()) {
+      const h = text.match(/^#\s+(.+)$/m)
+      title.value = h ? h[1].trim() : md.name.replace(/\.(md|markdown)$/i, '')
+    }
+
+    msg.value = missing.length
+      ? `已导入，但有 ${missing.length} 张图没匹配到：${missing.slice(0, 3).join('、')}…`
+      : '已导入'
+    setTimeout(() => { msg.value = '' }, 4000)
+  } catch (err) {
+    msg.value = '导入失败：' + err.message
+  } finally {
+    mdImporting.value = false
+  }
+}
+
+// ---------- 文章内插图 ----------
+const imgInput = ref(null)
+const imgBusy = ref(false)
+
+const pickImage = () => { if (imgInput.value) imgInput.value.click() }
+
+// ★ 粘贴 / 拖入图片：直接上传并插入 Markdown（CSDN 那种体验）
+const uploadAndInsert = async (files) => {
+  imgBusy.value = true
+  try {
+    for (const f of files) {
+      const res = await uploadFile(localStorage.getItem('token'), f)
+      if (res.data.error) { msg.value = res.data.error; continue }
+      insertAtCursor(`
+![图片](${res.data.url})
+`)
+    }
+  } catch (err) {
+    msg.value = '图片上传失败：' + err.message
+  } finally {
+    imgBusy.value = false
+  }
+}
+
+const handlePaste = async (e) => {
+  const items = Array.from(e.clipboardData?.items || [])
+  const files = items
+    .filter(i => i.kind === 'file' && i.type.startsWith('image/'))
+    .map(i => i.getAsFile())
+    .filter(Boolean)
+  if (!files.length) return
+  e.preventDefault()
+  await uploadAndInsert(files)
+}
+
+const handleDragOver = (e) => {
+  if (e.dataTransfer && Array.from(e.dataTransfer.items || []).some(i => i.kind === 'file')) {
+    e.preventDefault()
+  }
+}
+
+const handleDrop = async (e) => {
+  const files = Array.from(e.dataTransfer?.files || []).filter(f => f.type.startsWith('image/'))
+  if (!files.length) return
+  e.preventDefault()
+  await uploadAndInsert(files)
+}
+
+const onPickImage = async (e) => {
+  const file = e.target.files && e.target.files[0]
+  e.target.value = ''
+  if (!file) return
+
+  imgBusy.value = true
+  try {
+    const res = await uploadFile(localStorage.getItem('token'), file)
+    if (res.data.error) { msg.value = res.data.error; return }
+    insertAtCursor(`
+![图片](${res.data.url})
+`)
+  } catch (err) {
+    msg.value = '图片上传失败：' + err.message
+  } finally {
+    imgBusy.value = false
+  }
+}
+
+function insertAtCursor(text) {
+  const el = editorRef.value
+  if (!el) { content.value += text; return }
+  const start = el.selectionStart
+  const end = el.selectionEnd
+  content.value = content.value.slice(0, start) + text + content.value.slice(end)
+  nextTick(() => {
+    el.focus()
+    el.setSelectionRange(start + text.length, start + text.length)
+  })
+}
+
 function applyTool(t) {
   const el = editorRef.value
   if (!el) return
@@ -238,6 +463,9 @@ onMounted(async () => {
       content.value = a.content
       isPublic.value = a.is_public
       category.value = a.category || ''          // ★ 回填分类
+      isPaid.value = !!a.is_paid                 // ★ 回填付费设置
+      coverUrl.value = a.cover || ''
+      priceYuan.value = a.price ? (a.price / 100).toFixed(2) : ''
       tags.value = (a.tags || []).map(t => t.name)   // ★ 回填标签
     }
   } catch (e) {
@@ -255,15 +483,34 @@ const handleDone = async () => {
   const token = localStorage.getItem('token')
   if (!token) { goLogin(router); return }
 
+  // ★ 付费校验: 勾了付费必须填 > 0 的价格; 前端用"元", 提交时转成"分"
+  let priceFen = 0
+  if (isPaid.value) {
+    const yuan = Number(priceYuan.value)
+    if (!yuan || yuan <= 0) {
+      msg.value = '付费文章请填写价格'
+      return
+    }
+    priceFen = Math.round(yuan * 100)
+  }
+
   try {
     if (isEdit) {
-      await updateArticle(token, editId, title.value.trim(), content.value.trim(), isPublic.value, category.value, tags.value)
+      await updateArticle(token, editId, title.value.trim(), content.value.trim(), isPublic.value, category.value, tags.value, isPaid.value, priceFen, coverUrl.value)
     } else {
-      await addArticle(token, title.value.trim(), content.value.trim(), isPublic.value, category.value, tags.value)
+      await addArticle(token, title.value.trim(), content.value.trim(), isPublic.value, category.value, tags.value, isPaid.value, priceFen, coverUrl.value)
     }
     router.push('/my-articles')
   } catch (err) {
-    msg.value = '保存失败：' + err.message
+    // 401 = token 过期或无效。直接提示"保存失败"会让人以为是代码问题,
+    // 这里单独说清楚, 并把人送回登录页。
+    if (err.response?.status === 401) {
+      localStorage.removeItem('token')
+      msg.value = '登录已过期，请重新登录'
+      setTimeout(() => goLogin(router), 800)
+      return
+    }
+    msg.value = '保存失败：' + (err.response?.data?.error || err.message)
   }
 }
 </script>
@@ -296,6 +543,18 @@ const handleDone = async () => {
   font-size: 14px; color: #4b5563; cursor: pointer; user-select: none;
 }
 .pub input { cursor: pointer; accent-color: #14b8a6; }
+
+/* 付费价格输入 */
+.price-wrap {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 14px; color: #0f766e;
+}
+.price-input {
+  width: 76px; padding: 5px 8px;
+  border: 1px solid #e6ebf2; border-radius: 8px;
+  font-size: 13px; font-family: inherit; outline: none;
+}
+.price-input:focus { border-color: #14b8a6; }
 
 /* 分类下拉 */
 .cat-sel {
@@ -414,4 +673,27 @@ const handleDone = async () => {
 }
 
 .msg { text-align: center; color: #e74c3c; margin-top: 12px; }
+
+/* ===== 封面 ===== */
+.cover-row { display: flex; align-items: center; gap: 16px; margin: 14px 0 4px; }
+.cover-box {
+  width: 180px; height: 100px; border-radius: 10px; overflow: hidden;
+  background: #f2fbf9; border: 1px dashed #99f6e4;
+  display: flex; align-items: center; justify-content: center;
+}
+.cover-box img { width: 100%; height: 100%; object-fit: cover; }
+.cover-tip { font-size: 12px; color: #9aa5b1; }
+.cover-actions { display: flex; flex-direction: column; gap: 6px; }
+.cover-pick {
+  display: inline-block; padding: 7px 14px;
+  border: 1px solid #14b8a6; border-radius: 9px;
+  color: #0f766e; font-size: 13px; cursor: pointer; text-align: center;
+}
+.cover-pick:hover { background: #f0fdfa; }
+.cover-rm {
+  border: none; background: none; color: #9aa5b1;
+  font-size: 12px; cursor: pointer; text-align: left; padding: 0;
+}
+.cover-rm:hover { color: #e74c3c; }
+.cover-hint { font-size: 11px; color: #b6c0cc; }
 </style>

@@ -3,13 +3,18 @@
 # ============================================================
 # 又是"加新功能 = 加新文件"的一次示范。
 # 挂上去只要在 main.py 加一行 include_router。
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, and_
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User, Article, Follow
+from models import User, Article, Follow, Message
 from dependencies import get_current_user
+from routers.notifications import notify
+from routers.messages import get_or_create_conversation
+from routers.orders import make_preview
 
 router = APIRouter()
 
@@ -54,9 +59,45 @@ def follow_user(
     #   如果 user_id 也从请求体里拿, 那前端说关注谁就关注谁 —— 但这里本来就允许
     #   指定关注对象, 所以唯一不能信的是"我是谁", 而那个永远从 token 来
     db.add(Follow(user_id=me, target_user_id=user_id))
+
+    # ---------- 通知 ----------
+    # ① 告诉对方: "X 关注了你"
+    #    收件人 = 被关注的人, 寄件人 = 我
+    notify(
+        db,
+        to_user=user_id,
+        type="follow",
+        content=f"{current_user['username']} 关注了你",
+        link=f"/user/{me}",
+        from_user=me,
+    )
+
+    # ② 关注自动回复: 对方设了欢迎语 → 以【对方】的身份给我发一条私信
+    #    方向: from_user = 被关注的人, 收件人 = 我
+    #
+    #    ★ 为什么不走 HTTP 接口, 直接调函数?
+    #      大家都在同一个进程里, 函数调用就够了。
+    #      给自己发一个 POST /conversations/{id}/messages 纯属绕远,
+    #      还多一次"我到底有没有这个会话"的权限判断。
+    #
+    #    ★ 两个人在聊天也照发 (跟 QQ 一样: 聊到一半关注了, 也会冒一句"已成为好友")
+    #      所以这里不判断"会话是否已存在", 直接拿/建 + 插消息。
+    greeting_sent = False
+    if target.follow_greeting:
+        conv = get_or_create_conversation(db, target.id, me)
+        db.add(Message(
+            conversation_id=conv.id,
+            from_user=target.id,
+            content=target.follow_greeting,
+        ))
+        # ★ 必须更新: 会话列表是按 last_message_at 倒序的
+        conv.last_message_at = datetime.now()
+        greeting_sent = True
+
+    # ★ 关注行 + 通知 + 欢迎私信, 一次提交 (要么都成, 要么都不成)
     db.commit()
 
-    return {"message": "关注成功"}
+    return {"message": "关注成功", "sent_greeting": greeting_sent}
 
 
 # ---------- 取关 DELETE /users/{id}/follow (需登录) ----------
@@ -205,8 +246,11 @@ def my_feed(
 
     return {
         "items": [
-            {"id": a.id, "title": a.title, "content": a.content,
+            # ★ 付费文章只给开头 (跟首页列表一致, 别在这漏全文)
+            {"id": a.id, "title": a.title,
+             "content": make_preview(a.content) if a.is_paid else a.content,
              "user_id": a.user_id, "author": username,
+             "is_paid": a.is_paid, "price": a.price, "cover": a.cover,
              "created_at": str(a.created_at) if a.created_at else ""}
             for a, username in rows
         ],

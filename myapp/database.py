@@ -1,11 +1,18 @@
 # ============================================================
 # database.py - 数据库连接相关 (跟数据库打交道的东西都在这)
 # ============================================================
+import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 # 连接串: 连到项目的库 myapp_db
-DATABASE_URL = "mysql+pymysql://root:123456@localhost/myapp_db?charset=utf8mb4"
+# ★ 优先读环境变量 —— 上 Docker/云服务器时地址会变 (mysql 而不是 localhost),
+#   代码不用改，只改环境变量。
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "mysql+pymysql://root:123456@localhost/myapp_db?charset=utf8mb4",
+)
 
 engine = create_engine(DATABASE_URL)      # 引擎
 Base = declarative_base()                 # 所有 Model 的父类

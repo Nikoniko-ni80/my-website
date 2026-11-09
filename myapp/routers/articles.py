@@ -11,12 +11,15 @@ from sqlalchemy.orm import Session
 
 from cache import (count_view, add_hot,
                    redis_client, HOT_KEY,
-                   W_VIEW, W_LIKE, W_COMMENT)
+                   W_VIEW, W_LIKE, W_COMMENT,
+                   remember_article_title, forget_article_title, suggest_articles)
 from database import get_db
 from models import User, Article, Comment, CommentLike, ArticleLike
 from schemas import ArticleIn, CommentIn, CATEGORIES
 from dependencies import get_current_user, get_current_user_optional
 from routers.tags import set_article_tags, tags_of_articles
+from routers.notifications import notify, notify_like
+from routers.orders import has_purchased, make_preview
 
 router = APIRouter()
 
@@ -38,12 +41,19 @@ def create_article(
     if article.category and article.category not in CATEGORIES:
         return {"error": "分类不合法"}
 
+    # ★ 付费: 设了付费但价格 <= 0, 按免费处理 (不然会变成"标着付费但不要钱")
+    is_paid = bool(article.is_paid and article.price > 0)
+    price = article.price if is_paid else 0
+
     new_article = Article(
         title=article.title,
         content=article.content,
         user_id=current_user["id"],    # ★关键①: 作者自动填"当前登录用户", 不从前端来!
         is_public=article.is_public,   # 公开/私有
         category=article.category,     # 分类 (可能是 "")
+        is_paid=is_paid,
+        price=price,
+        cover=article.cover[:200],
     )
     db.add(new_article)
     db.commit()
@@ -53,6 +63,11 @@ def create_article(
     #   (放在文章入库之后 —— 因为中间表需要 article_id)
     set_article_tags(db, new_article.id, article.tags)
     db.commit()
+
+    # 标题索引进 Redis（搜索建议用，不查库）
+    # ★ 只有公开文章才进；私有文章不该被别人搜到
+    if new_article.is_public:
+        remember_article_title(new_article.id, new_article.title, current_user["username"])
 
     return {"message": "发布成功", "id": new_article.id, "title": new_article.title}
 
@@ -81,7 +96,7 @@ def list_my_articles(
     return [
         {"id": a.id, "title": a.title, "content": a.content,
          "user_id": a.user_id, "is_public": a.is_public,
-         "category": a.category,
+         "category": a.category, "cover": a.cover,
          "like_count": like_map.get(a.id, 0)}
         for a in rows
     ]
@@ -107,6 +122,9 @@ def get_my_article(
     return {"id": row.id, "title": row.title, "content": row.content,
             "user_id": row.user_id, "is_public": row.is_public,
             "category": row.category,
+            "cover": row.cover,
+            # ★ 付费设置: 编辑时要回填到表单里
+            "is_paid": row.is_paid, "price": row.price,
             "author": current_user["username"],
             "author_avatar": u.avatar if u else "",
             "author_bio":    u.bio if u else "",
@@ -143,11 +161,21 @@ def update_article(
     row.content = article.content
     row.is_public = article.is_public
     row.category = article.category
+    # ★ 付费设置同理: 标了付费但价格 <= 0 → 按免费
+    row.is_paid = bool(article.is_paid and article.price > 0)
+    row.price = article.price if row.is_paid else 0
+    row.cover = article.cover[:200]
     db.commit()
 
     # ★ 标签也整体替换掉 (先删旧关联, 再按新的一批重建)
     set_article_tags(db, article_id, article.tags)
     db.commit()
+
+    # 标题/公开状态可能改了 → 同步 Redis 索引
+    if row.is_public:
+        remember_article_title(article_id, row.title, current_user["username"])
+    else:
+        forget_article_title(article_id)   # 改成私有 → 从建议里移除
 
     return {"message": "修改成功"}
 
@@ -175,7 +203,18 @@ def delete_article(
     #     db.query(History).filter(History.article_id == article_id).delete()
     db.delete(row)
     db.commit()
+
+    # 从标题索引里删掉
+    forget_article_title(article_id)
+
     return {"message": "删除成功"}
+
+
+# ---------- 搜索建议 GET /suggest (不用登录, 只读 Redis) ----------
+# 输入框边输边调用；不查 MySQL，真正搜索才走 /articles
+@router.get("/suggest")
+def suggest(keyword: str = "", limit: int = 6):
+    return {"items": suggest_articles(keyword, max(1, min(limit, 10)))}
 
 
 # ---------- 公开文章列表 GET /articles (不用登录, 带分页 + 搜索) ----------
@@ -243,9 +282,15 @@ def list_articles(
 
     return {
         "items": [
-            {"id": a.id, "title": a.title, "content": a.content,
+            {"id": a.id, "title": a.title,
+             # ★ 付费文章在列表里只给开头 —— 这一层没有登录信息, 也不该给全文
+             #   (真要看全文, 去详情页, 那里才判断"买没买")
+             "content": make_preview(a.content) if a.is_paid else a.content,
              "user_id": a.user_id, "author": username,
              "category": a.category,                  # ★ 分类 (空字符串 = 未分类)
+             "is_paid": a.is_paid,                    # ★ 是不是付费
+             "price": a.price,                        # ★ 价格 (分)
+             "cover": a.cover,                        # ★ 封面 (空 = 渐变)
              "like_count": like_map.get(a.id, 0),     # ★ 现算的, 补 0
              "tags": tag_map.get(a.id, [])}           # ★ 标签
             for a, username in rows
@@ -282,9 +327,11 @@ def hot_articles(
 
     # ---------- ① 从 Redis 拿【原始分】前 50 ----------
     raw = redis_client.zrevrange(HOT_KEY, 0, 49, withscores=True)
+    #     z->zset类型  rev->反序  range->取一段  
     #     → [ ("11", 50.0), ("20", 34.0), ... ]
     raw_map = {int(aid): float(score) for aid, score in raw}
     #           ↑ 成员是字符串, 转成 int
+    #把 Redis 返回的列表，转成方便按 id 查分数的字典。
 
     # ---------- ② 补上"最近 24 小时发布的新文章" ----------
     # 为什么? 新文章原始分低, 排不进前 50 → 永远没机会上榜。
@@ -303,8 +350,10 @@ def hot_articles(
     if recent_ids:
         pipe = redis_client.pipeline()
         for aid in recent_ids:
-            pipe.zscore(HOT_KEY, aid) ##把查询多篇文章的命令合在一起
-        for aid, s in zip(recent_ids, pipe.execute()): ##一起发出去
+            pipe.zscore(HOT_KEY, aid) 
+            ##zscore->查单个    把查询多篇文章的命令合在一起
+        for aid, s in zip(recent_ids, pipe.execute()):
+        ##拿着这批新文章的 id，去 HOT_KEY 这个 ZSET 里挨个查分数
             if s is not None:
                 raw_map[aid] = float(s)
 
@@ -322,7 +371,7 @@ def hot_articles(
 
     # 点赞量: 还是 IN + GROUP BY 那一套, 别写成 N+1
     likes = {
-        aid: n for aid, n in
+        aid: n for aid, n in #aid就是文章名
         db.query(ArticleLike.article_id, func.count())
         .filter(ArticleLike.article_id.in_(ids))
         .group_by(ArticleLike.article_id).all()
@@ -334,7 +383,7 @@ def hot_articles(
     #     "1.5" 来自 Reddit / Hacker News 的公开公式
     now = datetime.now()
     ranked = []
-    for a, name in rows:
+    for a, name in rows:##rows是319的文章表+作者名
         created = a.created_at or now
         hours = max((now - created).total_seconds() / 3600, 0)
         shown = raw_map.get(a.id, 0) / ((hours + 2) ** 1.5)
@@ -344,9 +393,11 @@ def hot_articles(
     ranked.sort(key=lambda x: -x[0])      # 降序 (Python 没有直接倒序的 sort)
 
     return {"items": [
-        {"id": a.id, "title": a.title, "content": a.content,
+        {"id": a.id, "title": a.title,
+         "content": make_preview(a.content) if a.is_paid else a.content,
          "user_id": a.user_id, "author": name,
          "category": a.category,
+         "is_paid": a.is_paid, "price": a.price, "cover": a.cover,
          "like_count": likes.get(a.id, 0),
          # ① 显示用: 原始热度分 (用户看得懂 —— "这篇被互动了 50 次")
          "heat": int(raw_map.get(a.id, 0)),
@@ -416,9 +467,28 @@ def get_article(
     #   阅读是最廉价的互动, 所以权重最低 (W_VIEW = 1)
     add_hot(article_id, W_VIEW)
 
-    return {"id": a.id, "title": a.title, "content": a.content,
+    # ------------------------------------------------------------
+    # ★ 付费文章: 没买只能看开头
+    # ------------------------------------------------------------
+    # 【为什么截断必须在这里做】
+    #   如果把全文发给前端、再用 CSS 盖一层遮罩 —— 右键"查看网页源代码"
+    #   就能拿到全文。付费内容一个字都不能发给没买的人。
+    me = current_user["id"] if current_user else None
+    is_author = me is not None and a.user_id == me
+    purchased = has_purchased(db, me, a.id)
+    locked = bool(a.is_paid and a.price > 0 and not is_author and not purchased)
+
+    return {"id": a.id, "title": a.title,
+            "content": make_preview(a.content) if locked else a.content,
             "user_id": a.user_id, "author": u.username,
             "category": a.category,
+            # ★ 付费相关
+            "is_paid": a.is_paid,
+            "price": a.price,
+            "cover": a.cover,
+            "locked": locked,            # 前端看到 True → 显示"购买解锁"
+            "purchased": purchased,      # 我买过没
+            "is_author": is_author,      # 是不是我自己的文章
             # ★ 右侧作者卡片用 (只给这几样, 不给 password_hash/is_admin)
             "author_avatar": u.avatar,
             "author_bio":    u.bio,
@@ -517,6 +587,29 @@ def create_comment(
         reply_to_user_id=reply_to_user_id,
     )
     db.add(new_comment)
+
+    # ---------- 通知 ----------
+    # 回复 → 通知"被回复的人"; 顶层评论 → 通知"文章作者"
+    if comment.reply_to_comment_id is not None and reply_to_user_id:
+        notify(
+            db,
+            to_user=reply_to_user_id,
+            type="reply",
+            content=f"{current_user['username']} 回复了你的评论",
+            link=f"/article/{article_id}",
+            from_user=current_user["id"],
+        )
+    else:
+        notify(
+            db,
+            to_user=art.user_id,
+            type="comment",
+            content=f"{current_user['username']} 评论了你的文章《{art.title}》",
+            link=f"/article/{article_id}",
+            from_user=current_user["id"],
+        )
+
+    # 评论 + 通知, 一次提交
     db.commit()
     db.refresh(new_comment)
 
@@ -799,6 +892,10 @@ def like_article(
         return {"message": "已经赞过了"}      # 当成功, 不报错
 
     db.add(ArticleLike(user_id=me, article_id=article_id))
+
+    # ★ 通知作者（自己赞自己不通知；同一个人同一篇只发一次，防止反复赞刷通知）
+    notify_like(db, art, current_user)
+
     db.commit()
 
     # ★ 点赞 +3 热度。注意放在了"已经赞过"那个 return 的【后面】——

@@ -20,7 +20,7 @@
             @click="$router.push(`/user/${u.id}`)"
           >
             <div class="f-avatar">
-              <img v-if="u.avatar" :src="u.avatar" alt="" />
+              <img v-if="u.avatar" :src="mediaUrl(u.avatar)" alt="" />
               <span v-else><IconUser /></span>
             </div>
             <div class="f-text">
@@ -51,7 +51,10 @@
               class="item card hoverable"
               @click="goDetail(a.id)"
             >
-              <div class="cover" :class="coverOf(i)"><IconDoc /></div>
+              <div class="cover" :class="coverOf(i)">
+                <img v-if="a.cover" :src="mediaUrl(a.cover)" alt="" class="cover-img" />
+                <IconDoc v-else />
+              </div>
               <div class="art-text">
                 <p class="t"><strong>{{ a.title }}</strong></p>
                 <p class="c">{{ stripMarkdown(a.content) || '（无内容）' }}</p>
@@ -88,6 +91,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getMyFeed, getMyFollowing } from '../services/authApi.js'
+import { mediaUrl } from '../utils/media.js'
 import { stripMarkdown } from '../utils/markdown.js'
 import { goLogin } from '../utils/auth.js'
 
@@ -275,4 +279,6 @@ onMounted(() => {
 }
 .pager button:hover:not(:disabled) { border-color: #14b8a6; color: #14b8a6; }
 .pager button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 </style>

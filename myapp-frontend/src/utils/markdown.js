@@ -11,6 +11,7 @@
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import hljs from 'highlight.js'
+import { API_BASE } from '../services/authApi.js'
 
 // ---------- 配置 marked ----------
 marked.use({
@@ -45,7 +46,12 @@ export function renderMarkdown(text) {
   // DOMPurify 会把危险的标签/属性洗掉, 只留下安全的那些。
   //
   // 一句话: 【永远不要 v-html 一段没洗过的用户输入】
-  return DOMPurify.sanitize(html)
+  const clean = DOMPurify.sanitize(html)
+
+  // ★ 文章里的图片存的是相对路径 (/uploads/x.png)，
+  //   浏览器会去前端域名下找 → 404。这里补上后端地址。
+  if (!API_BASE) return clean
+  return clean.replace(/src="\/uploads\//g, `src="${API_BASE}/uploads/`)
 }
 
 

@@ -27,7 +27,8 @@
         @click="$router.push(`/article/${a.id}`)"
       >
         <div class="art-cover" :class="coverOf(a.id)">
-          <IconDoc />
+          <img v-if="a.cover" :src="mediaUrl(a.cover)" alt="" class="cover-img" />
+          <IconDoc v-else />
         </div>
         <div class="art-body">
           <p class="art-title">
@@ -64,6 +65,7 @@
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { getArticlesByTag } from '../services/authApi.js'
+import { mediaUrl } from '../utils/media.js'
 import { stripMarkdown } from '../utils/markdown.js'
 
 const route = useRoute()
@@ -203,4 +205,6 @@ watch(() => route.params.name, () => {
 .pg-btn:disabled { opacity: 0.45; cursor: default; }
 .pg-num.on { background: #14b8a6; border-color: #14b8a6; color: #fff; }
 .pg-num:hover:not(.on) { border-color: #14b8a6; color: #0f766e; }
+
+.cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 </style>

@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Tag, ArticleTag, Article, ArticleLike, User
+from routers.orders import make_preview
 
 router = APIRouter()
 
@@ -183,9 +184,11 @@ def articles_by_tag(
 
     return {
         "items": [
-            {"id": a.id, "title": a.title, "content": a.content,
+            {"id": a.id, "title": a.title,
+             "content": make_preview(a.content) if a.is_paid else a.content,
              "user_id": a.user_id, "author": username,
              "category": a.category,
+             "is_paid": a.is_paid, "price": a.price, "cover": a.cover,
              "like_count": likes.get(a.id, 0)}
             for a, username in rows
         ],

@@ -21,7 +21,7 @@ import time
 
 from sqlalchemy import func
 
-from cache import (redis_client, VIEWS_KEY, HOT_KEY,
+from cache import (redis_client, VIEWS_KEY, HOT_KEY, TITLE_KEY,
                    W_VIEW, W_LIKE, W_COMMENT)
 from database import SessionLocal
 from models import Article, ArticleLike, Comment
@@ -137,6 +137,34 @@ def _sync_loop():
             print("[倒库] 失败:", e)
 
 
+def rebuild_title_index():
+    """启动时从 MySQL 全量重建"文章标题索引"(Redis Hash)。
+
+    ★ 只在启动时查一次库；之后的新增/改名/删除由接口自己维护。
+    """
+    import json
+    from models import User
+
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(Article.id, Article.title, User.username)
+            .join(User, User.id == Article.user_id)
+            .filter(Article.is_public == True)   # ★ 私有文章不进搜索建议
+            .all()
+        )
+        redis_client.delete(TITLE_KEY)
+        # 逐条写（这个 redis-py 版本对 hset(mapping=...) 支持有问题）
+        for aid, title, author in rows:
+            redis_client.hset(TITLE_KEY, str(aid), json.dumps(
+                {"id": aid, "title": title, "author": author},
+                ensure_ascii=False,
+            ))
+        print(f"[标题索引] 重建 {len(rows)} 条")
+    finally:
+        db.close()
+
+
 def start_background_tasks():
     """在 FastAPI 启动时调用一次: 先补热度榜, 再把后台线程点着"""
     # ★ 先重建 (Redis 刚重启时 hot:raw 是空的, 不补的话热榜会空着)
@@ -145,6 +173,12 @@ def start_background_tasks():
         rebuild_hot()
     except Exception as e:
         print("[重建] 失败:", e)
+
+    # 重建搜索建议的标题索引（只查一次库）
+    try:
+        rebuild_title_index()
+    except Exception as e:
+        print("[标题索引] 重建失败:", e)
 
     threading.Thread(target=_sync_loop, daemon=True).start()
     # daemon=True 的意思是: 主程序退出时, 这个线程跟着一起死。

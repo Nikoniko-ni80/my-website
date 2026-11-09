@@ -1,0 +1,129 @@
+# ============================================================
+# docker-compose.yml —— 一条命令把整个项目拉起来
+# ============================================================
+# 启动:  docker compose up -d --build
+# 查看:  docker compose ps          (看谁在跑)
+# 日志:  docker compose logs -f backend
+# 关闭:  docker compose down        (数据卷还在)
+# 清空:  docker compose down -v     (连数据一起删!)
+#
+# 【容器之间怎么互相找到】
+#   compose 会建一个内部网络, 服务名就是域名:
+#     mysql / redis / rabbitmq / backend 这些名字可以直接当主机名用。
+#   所以后端连的是 mysql:3306, 不是 127.0.0.1:3306。
+#   (127.0.0.1 在容器里指的是"它自己", 不是你的电脑)
+# ============================================================
+name: myblog
+
+services:
+  # ---------------- MySQL ----------------
+  mysql:
+    image: mysql:8.4
+    container_name: myblog-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+      MYSQL_DATABASE: myapp_db
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # 第一次启动(数据目录还是空的)时, MySQL 会自动执行这个文件夹里的 .sql
+      # 里面是当前数据库的表结构和数据。想从空库开始, 把这个挂载删掉即可。
+      - ./deploy/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p123456 --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    ports:
+      # 宿主机 3307 → 容器 3306 (3306 被本机那个 MySQL 占了, 所以错开)
+      # ★ 只绑 127.0.0.1: 本机调试能连, 公网连不到 (多一层保险)
+      - "127.0.0.1:3307:3306"
+
+  # ---------------- Redis ----------------
+  redis:
+    image: redis:7-alpine
+    container_name: myblog-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # ---------------- RabbitMQ ----------------
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: myblog-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: blog
+      RABBITMQ_DEFAULT_PASS: "123456"
+      TZ: Asia/Shanghai
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    ports:
+      # 管理后台: http://localhost:15673  (账号 blog / 123456)
+      - "127.0.0.1:15673:15672"
+
+  # ---------------- 后端 FastAPI ----------------
+  backend:
+    build: ./myapp
+    container_name: myblog-backend
+    restart: unless-stopped
+    environment:
+      # ★ 容器里的地址是服务名, 不是 localhost
+      DATABASE_URL: mysql+pymysql://root:123456@mysql:3306/myapp_db?charset=utf8mb4
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      AMQP_URL: amqp://blog:123456@rabbitmq:5672/%2F
+      ORDER_TTL_MS: "1800000"
+      # 上线时在服务器上的 .env 里写一个随机长串, 别用这里的默认值
+      SECRET_KEY: ${SECRET_KEY:-dev-only-secret-change-me}
+      # Token 有效期(分钟): 7 天。写文章不容易写到一半掉登录
+      TOKEN_EXPIRE_MINUTES: "10080"
+      TZ: Asia/Shanghai
+    volumes:
+      # 上传的图片放宿主机, 容器重建也不会丢
+      - ./myapp/uploads:/app/uploads
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    ports:
+      # 只绑本机, 方便 SSH 隧道调试接口文档; 公网访问不到
+      - "127.0.0.1:8001:8000"
+
+  # ---------------- 前端 Vue + nginx ----------------
+  frontend:
+    build:
+      context: ./myapp-frontend
+      args:
+        # 浏览器请求 /api/... → nginx 转给 backend:8000
+        VITE_API_BASE: /api
+    container_name: myblog-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      # 本机默认 8080; 服务器上在 .env 里写 WEB_PORT=80 就直接用 80 端口
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  mysql_data:
+  redis_data:
+  rabbitmq_data:

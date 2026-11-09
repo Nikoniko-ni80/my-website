@@ -13,7 +13,7 @@
       <div class="profile card">
         <!-- 头像: 有 URL 就显示图片, 没有就用默认 emoji 占位 -->
         <div class="avatar">
-          <img v-if="user.avatar" :src="user.avatar" alt="头像" />
+          <img v-if="user.avatar" :src="mediaUrl(user.avatar)" alt="头像" />
           <span v-else><IconUser /></span>
         </div>
 
@@ -33,19 +33,24 @@
         </div>
 
         <div class="actions">
-          <!-- 看自己的主页 → 编辑资料; 看别人的 → 关注按钮 -->
+          <!-- 看自己的主页 → 编辑资料; 看别人的 → 关注 + 私信 -->
           <button v-if="isMe" class="btn-edit" @click="openEdit">编辑资料</button>
-          <button
-            v-else
-            class="btn-follow"
-            :class="{ on: following }"
-            :disabled="followBusy"
-            @click="toggleFollow"
-          >
-            {{ following ? '✓ 已关注' : '+ 关注' }}
-          </button>
+          <template v-else>
+            <button
+              class="btn-follow"
+              :class="{ on: following }"
+              :disabled="followBusy"
+              @click="toggleFollow"
+            >
+              {{ following ? '✓ 已关注' : '+ 关注' }}
+            </button>
+            <button class="btn-msg" @click="startChat">✉️ 私信</button>
+          </template>
         </div>
       </div>
+
+      <!-- 对方设置了关注欢迎语时, 后端会顺手发一条私信, 这里提示一下 -->
+      <p v-if="followTip" class="follow-tip">✉️ {{ user.username }} 给你发了一条私信</p>
 
       <!-- ========== 他的文章 ========== -->
       <h3 class="sec-title">
@@ -59,7 +64,10 @@
           class="item card hoverable"
           @click="$router.push(`/article/${a.id}`)"
         >
-          <div class="cover" :class="coverOf(i)"><IconDoc /></div>
+          <div class="cover" :class="coverOf(i)">
+                <img v-if="a.cover" :src="mediaUrl(a.cover)" alt="" class="cover-img" />
+                <IconDoc v-else />
+              </div>
           <div class="art-text">
             <p class="t"><strong>{{ a.title }}</strong></p>
             <p class="c">{{ stripMarkdown(a.content) || '（无内容）' }}</p>
@@ -94,7 +102,7 @@
           @click="goUser(u.id)"
         >
           <div class="u-avatar">
-            <img v-if="u.avatar" :src="u.avatar" alt="" />
+            <img v-if="u.avatar" :src="mediaUrl(u.avatar)" alt="" />
             <span v-else><IconUser /></span>
           </div>
           <div class="u-text">
@@ -116,22 +124,30 @@
         <input v-model="editUsername" placeholder="改一个新名字" />
         <p class="hint">改了之后要用新用户名登录哦</p>
 
-        <label class="lbl">头像地址</label>
-        <input v-model="editAvatar" placeholder="填一个图片网址，比如 /banners/code.jpg" />
+        <label class="lbl">头像</label>
+        <div class="avatar-edit">
+          <div class="avatar small">
+            <img v-if="editAvatar" :src="mediaUrl(editAvatar)" alt="" @error="imgBad = true" />
+            <span v-else><IconUser /></span>
+          </div>
+          <div class="av-actions">
+            <label class="pick-btn">
+              {{ uploading ? '上传中…' : '选择图片' }}
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                hidden
+                @change="onPickAvatar"
+              />
+            </label>
+            <button v-if="editAvatar" class="rm-btn" type="button" @click="clearAvatar">移除</button>
+            <span class="av-hint">jpg / png / gif / webp，2MB 以内</span>
+          </div>
+        </div>
+        <p v-if="imgBad" class="hint">⚠️ 这张图加载不出来</p>
 
         <label class="lbl">个人简介</label>
         <textarea v-model="editBio" rows="3" placeholder="介绍一下自己～"></textarea>
-
-        <!-- 小预览: 让你填完就知道长啥样 -->
-        <div class="preview">
-          <div class="avatar small">
-            <img v-if="editAvatar" :src="editAvatar" alt="" @error="imgBad = true" />
-            <span v-else><IconUser /></span>
-          </div>
-          <span class="pv-tip">
-            {{ editAvatar ? (imgBad ? '⚠️ 这个地址加载不出图片' : '预览') : '没填就用默认头像' }}
-          </span>
-        </div>
       </div>
 
       <!-- ★ 保存失败的提示 (比如"用户名已经有人用了") -->
@@ -144,6 +160,7 @@
         </button>
       </div>
     </Modal>
+
   </div>
 </template>
 
@@ -152,8 +169,9 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   getUserProfile, getMe, updateMe, followUser, unfollowUser, getFollowStatus,
-  getFollowers, getFollowing
+  getFollowers, getFollowing, uploadFile
 } from '../services/authApi.js'
+import { mediaUrl } from '../utils/media.js'
 import { stripMarkdown } from '../utils/markdown.js'
 import Modal from './Modal.vue'
 import { goLogin } from '../utils/auth.js'
@@ -176,6 +194,7 @@ const isMe = computed(() => myId.value !== null && myId.value === userId)
 // ---- 关注 ----
 const following = ref(false)
 const followBusy = ref(false)
+const followTip = ref(false)   // 对方设置了欢迎语 → 提示"他给你发了条私信"
 
 const toggleFollow = async () => {
   const token = localStorage.getItem('token')
@@ -194,11 +213,25 @@ const toggleFollow = async () => {
     following.value = !following.value
     // 粉丝数本地跟着动一下, 不用重新请求
     user.value.follower_count += following.value ? 1 : -1
+
+    // 对方设了欢迎语 → 后端以他的身份发了一条私信, 告诉我一声
+    if (following.value && res.data.sent_greeting) {
+      followTip.value = true
+      setTimeout(() => { followTip.value = false }, 4000)
+    }
   } catch (e) {
     console.error('关注操作失败', e)
     error.value = '操作失败：' + e.message
   }
   followBusy.value = false
+}
+
+// ---- 私信 ----
+// 点「私信」直接进聊天页（用对方 id 进），第一句话发出去才真正建会话
+const startChat = () => {
+  if (!localStorage.getItem('token')) { goLogin(router); return }
+  if (isMe.value) return
+  router.push(`/messages/with/${userId}`)
 }
 
 // ---- 关注 / 粉丝 列表弹窗 ----
@@ -233,6 +266,31 @@ const openList = async (tab) => {
 const showEdit = ref(false)
 const editUsername = ref('')
 const editAvatar = ref('')
+const uploading = ref(false)
+
+// 选图 → 立刻上传 → 拿到 /uploads/xxx.png 存进表单
+const onPickAvatar = async (e) => {
+  const file = e.target.files && e.target.files[0]
+  e.target.value = ''            // 允许第二次选同一个文件
+  if (!file) return
+
+  uploading.value = true
+  imgBad.value = false
+  try {
+    const res = await uploadFile(localStorage.getItem('token'), file)
+    if (res.data.error) { editMsg.value = res.data.error; return }
+    editAvatar.value = res.data.url
+  } catch (err) {
+    editMsg.value = '上传失败：' + err.message
+  } finally {
+    uploading.value = false
+  }
+}
+
+const clearAvatar = () => {
+  editAvatar.value = ''
+  imgBad.value = false
+}
 const editBio = ref('')
 const saving = ref(false)
 const imgBad = ref(false)          // 预览图加载失败
@@ -425,7 +483,21 @@ onMounted(load)
 
 .bio { font-size: 14px; color: #4b5563; line-height: 1.7; word-break: break-word; }
 
-.actions { flex-shrink: 0; }
+.actions {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 10px;
+}
+
+/* 关注后的小提示: 告诉用户私信是他关注的人发的, 不是系统广告 */
+.follow-tip {
+  margin: 10px 0 0;
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: #f0fdfa;
+  border: 1px solid #ccfbf1;
+  color: #0f766e;
+  font-size: 13px;
+}
 .btn-edit {
   padding: 8px 18px; border: 1px solid #e6ebf2; border-radius: 10px;
   background: #fff; color: #64748b; font-size: 13px; cursor: pointer;
@@ -445,6 +517,22 @@ onMounted(load)
   background: #fff; color: #14b8a6; border: 1px solid #14b8a6;
 }
 .btn-follow.on:hover { background: #f0fdfa; }
+
+/* 私信按钮 */
+.btn-msg {
+  padding: 8px 18px; border: 1px solid #e6ebf2; border-radius: 10px;
+  background: #fff; color: #4b5563; font-size: 13px; cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-msg:hover { border-color: #14b8a6; color: #0f766e; background: #f0fdfa; }
+
+/* 第一次私信的输入框 */
+.chat-textarea {
+  width: 100%; min-height: 80px; padding: 10px 12px;
+  border: 1px solid #e6ebf2; border-radius: 10px; outline: none;
+  font-family: inherit; font-size: 14px; line-height: 1.6; resize: vertical;
+}
+.chat-textarea:focus { border-color: #14b8a6; }
 
 /* ---------- 文章列表 ---------- */
 .sec-title { font-size: 16px; color: #374151; margin-bottom: 14px; }
@@ -494,4 +582,22 @@ onMounted(load)
 .ok { background: #14b8a6; color: #fff; font-weight: 600; }
 .ok:hover { background: #0d9488; }
 .ok:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ===== 头像上传 ===== */
+.avatar-edit { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+.av-actions { display: flex; flex-direction: column; gap: 6px; }
+.pick-btn {
+  display: inline-block; padding: 7px 14px;
+  border: 1px solid #14b8a6; border-radius: 9px;
+  color: #0f766e; font-size: 13px; cursor: pointer; text-align: center;
+}
+.pick-btn:hover { background: #f0fdfa; }
+.rm-btn {
+  border: none; background: none; color: #9aa5b1;
+  font-size: 12px; cursor: pointer; text-align: left; padding: 0;
+}
+.rm-btn:hover { color: #e74c3c; }
+.av-hint { font-size: 11px; color: #b6c0cc; }
+
+.cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 </style>

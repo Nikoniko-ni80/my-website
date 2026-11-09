@@ -13,6 +13,8 @@ import UserPage from '../components/UserPage.vue'
 import FeedPage from '../components/FeedPage.vue'
 import HotPage from '../components/HotPage.vue'
 import TagPage from '../components/TagPage.vue'
+import NotificationsPage from '../components/NotificationsPage.vue'
+import MessagesPage from '../components/MessagesPage.vue'
 
 const routes = [
   { path: '/home', component: HomePage },                    // 首页 (公开文章流)
@@ -27,6 +29,11 @@ const routes = [
   { path: '/feed', component: FeedPage },                    // 关注 (我关注的人发的文章)
   { path: '/hot', component: HotPage },                      // 🔥 全站热榜
   { path: '/tag/:name', component: TagPage },                // # 标签页
+  { path: '/notifications', component: NotificationsPage },  // 🔔 我的消息
+  { path: '/messages', component: MessagesPage },            // ✉️ 私信 (自动打开最近一个会话)
+  // ★ 必须放在 /messages/:id 前面，否则 "with" 会被当成会话 id
+  { path: '/messages/with/:uid', component: MessagesPage },  // ✉️ 新会话 (按对方 user_id, 还没建会话也能进)
+  { path: '/messages/:id', component: MessagesPage },        // ✉️ 私信 (指定会话)
   // ↑ 两条路由共用同一个组件: 左边夹子列表 + 右边内容, 靠网址里的 id 决定右边显示谁
   { path: '/write', component: WriteArticlePage },           // 写文章
   { path: '/write/:id', component: WriteArticlePage },       // 编辑文章

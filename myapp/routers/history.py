@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import User, Article, History
+from routers.orders import make_preview
 from dependencies import get_current_user
 
 router = APIRouter()
@@ -67,7 +68,10 @@ def list_history(
         .all()
     )
     return [
-        {"id": a.id, "title": a.title, "content": a.content,
+        {"id": a.id, "title": a.title,
+         # ★ 付费文章只给开头: 浏览记录里可能躺着没买的付费文章
+         "content": make_preview(a.content) if a.is_paid else a.content,
+         "is_paid": a.is_paid, "price": a.price, "cover": a.cover,
          # ★ user_id 是给前端做"点作者名跳个人主页"用的
          "user_id": a.user_id, "author": u, "viewed_at": str(f)}
         for a, u, f in rows

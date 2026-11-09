@@ -1,5 +1,17 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* 选中文字的颜色 (跟站点主色配套) */
+::selection { background: #99f6e4; color: #0f766e; }
+
+/* 滚动条: 默认那条灰色的太"系统"了, 换成细一点的圆角条 */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1; border-radius: 8px;
+  border: 2px solid #fbfefe;      /* 用背景色描一圈, 看起来更细 */
+}
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
 /* ============================================================
    兜底: 用户能输入的文本, 一律允许从【任意位置】断开
    ============================================================
@@ -85,11 +97,21 @@ body {
   margin: 0 auto;
   padding: 24px 24px 60px;
   min-height: calc(100vh - 64px);
+  /* 切页面时轻轻淡入, 不会"啪"地一下换掉 */
+  animation: pageIn 0.32s ease both;
 }
+@keyframes pageIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 键盘 Tab 聚焦时才画描边 (鼠标点不显示, 不打扰视觉) */
+:focus-visible { outline: 2px solid #2dd4bf; outline-offset: 2px; }
 
 /* 卡片 */
 .card {
   background: var(--card);
+  border: 1px solid rgba(20, 184, 166, 0.08);
   border-radius: var(--radius);
   box-shadow: 0 2px 12px rgba(20, 184, 166, 0.07);
 }
@@ -157,7 +179,8 @@ body {
   overflow-x: auto;
 }
 .md-body pre code {
-  background: transparent; color: inherit;
+  /* ★ 必须给浅色：深色底上如果继承正文颜色，字会看不见 */
+  background: transparent; color: #e5e7eb;
   padding: 0; font-size: 13.5px; line-height: 1.65;
 }
 

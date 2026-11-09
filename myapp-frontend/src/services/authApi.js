@@ -1,8 +1,17 @@
 import axios from 'axios'
 
-// 我们后端的地址 (FastAPI 跑在 8000 端口)
+// 后端地址。
+// ★ 默认走本地；打包/上线时用环境变量 VITE_API_BASE 覆盖：
+//   开发:  不设 → http://127.0.0.1:8000
+//   上线:  设成 /api → 请求打到当前域名的 /api/xxx，由 nginx 转给后端
+//          (这样前后端同域, 不用管跨域, SSE/WebSocket 也走同一个口)
+// ⚠️ 这里必须用"是否定义"来判断, 不能用 || ——
+//    || 会把空字符串也当成没写, 那样同域部署就失效了。
+const ENV_BASE = import.meta.env.VITE_API_BASE
+export const API_BASE = ENV_BASE === undefined ? 'http://127.0.0.1:8000' : ENV_BASE
+
 const api = axios.create({
-  baseURL: 'http://127.0.0.1:8000',
+  baseURL: API_BASE,
   timeout: 5000
 })
 
@@ -130,10 +139,11 @@ export const getMyArticle = (token, id) => {
 
 // 发布文章: POST /articles (带 token, 传 title + content + is_public + category + tags)
 // tags 是一串标签名, 例如 ["Redis", "缓存"]
-export const addArticle = (token, title, content, isPublic, category = '', tags = []) => {
-  return api.post('/articles', { title, content, is_public: isPublic, category, tags }, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
+// price 单位是【分】: 5 元 = 500
+export const addArticle = (token, title, content, isPublic, category = '', tags = [], isPaid = false, price = 0, cover = '') => {
+  return api.post('/articles',
+    { title, content, is_public: isPublic, category, tags, is_paid: isPaid, price, cover },
+    { headers: { Authorization: `Bearer ${token}` } })
 }
 
 // 删文章: DELETE /articles/{id} (带 token)
@@ -144,10 +154,10 @@ export const deleteArticle = (token, id) => {
 }
 
 // 改文章: PUT /articles/{id} (带 token, 传新 title + content + is_public + category + tags)
-export const updateArticle = (token, id, title, content, isPublic, category = '', tags = []) => {
-  return api.put(`/articles/${id}`, { title, content, is_public: isPublic, category, tags }, {
-    headers: { Authorization: `Bearer ${token}` }
-  })
+export const updateArticle = (token, id, title, content, isPublic, category = '', tags = [], isPaid = false, price = 0, cover = '') => {
+  return api.put(`/articles/${id}`,
+    { title, content, is_public: isPublic, category, tags, is_paid: isPaid, price, cover },
+    { headers: { Authorization: `Bearer ${token}` } })
 }
 
 
@@ -165,6 +175,89 @@ export const getArticlesByTag = (name, page = 1, size = 10) => {
   return api.get(`/tags/${encodeURIComponent(name)}/articles`, {
     params: { page, size }
   })
+}
+
+
+// ================= 通知相关 (都要登录) =================
+const auth = (token) => ({ headers: { Authorization: `Bearer ${token}` } })
+
+// 我的通知 (分页 + 分类)
+// category: '' 全部 / 'reply' 评论与回复 / 'like' 收到的赞 /
+//           'follow' 新增关注 / 'system' 系统通知
+export const getNotifications = (token, page = 1, size = 20, category = '') => {
+  return api.get('/notifications', { params: { page, size, category }, ...auth(token) })
+}
+
+// 未读数 (导航栏红点)
+export const getUnreadCount = (token) => {
+  return api.get('/notifications/unread-count', auth(token))
+}
+
+// 一条标为已读
+export const markNotificationRead = (token, id) => {
+  return api.put(`/notifications/${id}/read`, {}, auth(token))
+}
+
+// 全部已读
+export const markAllNotificationsRead = (token) => {
+  return api.put('/notifications/read-all', {}, auth(token))
+}
+
+// 清空 (category 不传 = 全部; 传分类 = 只清这一类)
+export const clearNotifications = (token, category = '') => {
+  return api.delete('/notifications', { params: { category }, ...auth(token) })
+}
+
+// 通知设置 (开关 + 自动回复)
+export const getNotificationSettings = (token) => {
+  return api.get('/notification-settings', auth(token))
+}
+export const updateNotificationSetting = (token, type, enabled) => {
+  return api.put('/notification-settings', { type, enabled }, auth(token))
+}
+export const updateFollowGreeting = (token, greeting) => {
+  return api.put('/notification-settings/greeting', { greeting }, auth(token))
+}
+
+
+// ================= 私信相关 (都要登录) =================
+
+// 我的会话列表: [{id, user_id, username, last_message, last_message_at, unread}]
+export const getConversations = (token) => {
+  return api.get('/conversations', auth(token))
+}
+
+// 我和某人有没有会话? → {conversation_id: 5} / {conversation_id: null}
+// (只查不建)
+export const getConversationWith = (token, userId) => {
+  return api.get(`/conversations/with/${userId}`, auth(token))
+}
+
+// 聊天记录 (before 可选: 传最早那条的 id, 取更早的)
+export const getMessages = (token, conversationId, before = null, limit = 30) => {
+  return api.get(`/conversations/${conversationId}/messages`, {
+    params: { limit, ...(before ? { before } : {}) },
+    ...auth(token),
+  })
+}
+
+// 轮询新消息: 只取比 afterId 更新的 (聊天页每几秒问一次)
+export const getMessagesAfter = (token, conversationId, afterId, limit = 50) => {
+  return api.get(`/conversations/${conversationId}/messages`, {
+    params: { after: afterId, limit },
+    ...auth(token),
+  })
+}
+
+// 发消息 ★ 这里传的是【对方的 user_id】, 不是会话 id
+// 返回 {message, conversation_id, item}
+export const sendMessage = (token, userId, content) => {
+  return api.post(`/conversations/${userId}/messages`, { content }, auth(token))
+}
+
+// 标记已读
+export const markConversationRead = (token, conversationId) => {
+  return api.put(`/conversations/${conversationId}/read`, {}, auth(token))
 }
 
 
@@ -348,4 +441,70 @@ export const getMyFollowing = (token) => {
   return api.get('/my/following', {
     headers: { Authorization: `Bearer ${token}` }
   })
+}
+
+
+// ================= 付费文章 / 余额（都要登录） =================
+
+// 下单: POST /orders {article_id} → {order_id, amount, status, expire_at}
+export const createOrder = (token, articleId) => {
+  return api.post('/orders', { article_id: articleId }, auth(token))
+}
+
+// 支付(模拟): POST /orders/{id}/pay → {message, article_id} 或 {error}
+export const payOrder = (token, orderId) => {
+  return api.post(`/orders/${orderId}/pay`, {}, auth(token))
+}
+
+// 我的订单
+export const getMyOrders = (token) => api.get('/my/orders', auth(token))
+
+// 我买过的文章
+export const getMyPurchases = (token) => api.get('/my/purchases', auth(token))
+
+// 余额 + 最近流水 → {balance, items:[{amount, reason, balance_after, created_at}]}
+export const getBalance = (token) => api.get('/my/balance', auth(token))
+
+// 模拟充值, amount 单位是【分】: 100 元 = 10000
+export const recharge = (token, amount) => {
+  return api.post('/my/balance/recharge', { amount }, auth(token))
+}
+
+
+// ================= SSE / WebSocket 地址 =================
+// EventSource / WebSocket 都不能带自定义请求头, 所以 token 放网址参数
+export const eventStreamUrl = (token) => {
+  return `${API_BASE}/events?token=${encodeURIComponent(token)}`
+}
+
+// 把 http://... 换成 ws://...，拼出 WebSocket 地址
+// ★ API_BASE 可能是相对路径 (/api, 上线同域部署的情况),
+//   这时要自己用当前页面的协议和域名拼成绝对地址 ——
+//   WebSocket 构造函数要的是 ws:// 或 wss:// 开头的完整地址。
+export const wsUrl = (path, token) => {
+  const q = `?token=${encodeURIComponent(token || '')}`
+
+  if (API_BASE.startsWith('http')) {
+    return `${API_BASE.replace(/^http/, 'ws')}${path}${q}`
+  }
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${location.host}${API_BASE}${path}${q}`
+}
+
+
+// ================= 搜索建议 =================
+// 只读 Redis，不查数据库；真正搜索还是走 getPublicArticles
+export const getSuggestions = (keyword, limit = 6) => {
+  return api.get('/suggest', { params: { keyword, limit } })
+}
+
+
+// ================= 文件上传 =================
+// 传一个 File 对象（<input type="file"> 里拿到的），返回 {url: "/uploads/xxx.png"}
+// 注意：不要手动设置 Content-Type，让浏览器自己带 multipart 边界
+export const uploadFile = (token, file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return api.post('/upload', fd, auth(token))
 }

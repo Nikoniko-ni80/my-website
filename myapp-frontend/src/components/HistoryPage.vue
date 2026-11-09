@@ -11,7 +11,10 @@
 
     <div v-else class="list">
       <div v-for="(a, i) in items" :key="a.id" class="item card">
-        <div class="cover" :class="coverOf(i)"><IconDoc /></div>
+        <div class="cover" :class="coverOf(i)">
+                <img v-if="a.cover" :src="mediaUrl(a.cover)" alt="" class="cover-img" />
+                <IconDoc v-else />
+              </div>
 
         <div class="art-text">
           <p class="t">
@@ -51,6 +54,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getHistory, clearHistory } from '../services/authApi.js'
+import { mediaUrl } from '../utils/media.js'
 import Modal from './Modal.vue'
 import { goLogin } from '../utils/auth.js'
 
@@ -183,4 +187,6 @@ onMounted(load)
 .cancel:hover { background: #e2e8f0; }
 .danger { background: #e74c3c; color: #fff; font-weight: 600; }
 .danger:hover { background: #c0392b; }
+
+.cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 </style>

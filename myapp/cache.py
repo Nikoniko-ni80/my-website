@@ -7,12 +7,15 @@
 #   ③ viewed:{文章}:{人}    去重标记, 防重复计数       String  1 小时过期
 #   ④ hot:raw              文章的热度原始分          ZSet    永久(能从 MySQL 重建)
 # ============================================================
+import os
+
 import redis
 
 # 连接 Redis (数据在内存里, 比 MySQL 快得多)
+# ★ 优先读环境变量: Docker 里服务名是 "redis", 不是 localhost
 redis_client = redis.Redis(  #这个redif.Redis相当于sql的engine,在后面{}设置地址和端口
-    host="localhost",
-    port=6379,
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
     decode_responses=True,   # 让取出来的是字符串, 不是字节
     #加密部分的两种编码  "abc".encode()   字符串编码为字节
     #                   b"abc".decode()   字节解码为字符串
@@ -122,21 +125,30 @@ def add_hot(article_id: int, weight: int):
 #   前缀字母 = 操作哪种形状:
 #       没前缀 → String       H → Hash
 #       Z     → ZSet         L → List      S → Set
-#   动词:
-#       SET/ADD  设置/添加        GET/RANGE  取
-#       INCRBY   自增指定数       DEL/REM    删
-#       EXISTS   存不存在         TTL        还剩几秒
+#   zincrby("hot:raw", 3, 31)
 #
-#   所以 zincrby = Z(Set) + INCRBY = "在 ZSet 里加分"
-#        hincrby = H(ash)  + INCRBY = "在 Hash 里加数"
-#
-# 【规律二】Python 写法 = 命令名全小写, 参数顺序照抄
-#   Redis  :  ZINCRBY hot:raw 3 7
-#   Python :  redis_client.zincrby("hot:raw", 3, 7)
-#   选项在网上是关键字参数:
-#   Redis  :  SET k v NX EX 3600
-#   Python :  redis_client.set("k", v, nx=True, ex=3600)
-#
+
+# zincrby("hot:raw", 3, 31)
+#          └──┬──┘  │  └┬┘
+#         哪个箱子  加多少  哪个成员
+
+# hincrby("article:views", 31, 1)
+#          └─────┬─────┘  └┬┘ └┬┘
+#            哪个箱子      哪个字段 加多少
+
+# set("viewed:31:u3", "1", ex=3600, nx=True)
+#      └─────┬─────┘  └┬┘  └──┬──┘  └──┬──┘
+#        哪个箱子      放什么  多久过期  只在不存在时
+
+#真正的存的东西如下
+# article:views（Hash）里:     { "31": "1" }        ← 字段31 → 值1
+# hot:raw（ZSet）里:           { "31": 3.0 }        ← 成员31 → 分数3
+# viewed:31:u3（String）里:    "1"                  ← 就一个值
+
+
+
+
+
 # 【本项目用到的命令】
 #   SET k v NX EX 3600      设值, 只在不存在时设, 3600 秒后自己消失
 #   HINCRBY key 字段 数      Hash 里某个字段 +数 (没有就当 0)
@@ -148,10 +160,6 @@ def add_hot(article_id: int, weight: int):
 #   ZREM key 成员            从 ZSet 里删掉某个成员
 #   EXISTS key               这个 key 存不存在 (1/0)
 #
-# 【注意参数顺序不同】
-#   HINCRBY key 字段 数      ← 字段在前
-#   ZINCRBY key 数  成员      ← 分数在前
-#   这是 Redis 的规定, 只能记。
 #
 # 【忘了怎么查】
 #   ① https://redis.io/commands ，每个命令第一行就是语法
@@ -217,3 +225,68 @@ def add_hot(article_id: int, weight: int):
 #
 #   完整说明见项目根目录: 《Redis 代码结构说明.md》
 # ============================================================
+
+
+# ============================================================
+# 文章标题索引 (给搜索建议用)
+# ============================================================
+# 【为什么放 Redis】
+#   搜索框边输边推荐：如果每次都查 MySQL，打字越多查得越多。
+#   把 id → {title, author} 放在 Redis 的 Hash 里，
+#   建议查询只读 Redis，不碰数据库。
+#
+#   ★ 只有用户真正搜索（回车/点建议）时才查 MySQL。
+#
+# 【什么时候更新】
+#   发文 / 改标题 → 写这里；删文章 → 删这里；
+#   后端启动时从 MySQL 全量重建一次（tasks.rebuild_title_index）。
+TITLE_KEY = "article:titles"
+
+
+def remember_article_title(article_id: int, title: str, author: str):
+    """新增或修改文章后调用。"""
+    import json
+    try:
+        redis_client.hset(TITLE_KEY, str(article_id), json.dumps(
+            {"id": article_id, "title": title, "author": author},
+            ensure_ascii=False,
+        ))
+    except Exception as e:
+        print("[标题索引] 写入失败:", e)
+
+
+def forget_article_title(article_id: int):
+    """删除文章后调用。"""
+    try:
+        redis_client.hdel(TITLE_KEY, str(article_id))
+    except Exception as e:
+        print("[标题索引] 删除失败:", e)
+
+
+def suggest_articles(keyword: str, limit: int = 6):
+    """按关键词在 Redis 里找标题，不查数据库。"""
+    import json
+    kw = (keyword or "").strip().lower()
+    if not kw:
+        return []
+
+    try:
+        raw = redis_client.hgetall(TITLE_KEY)
+    except Exception as e:
+        print("[标题索引] 读取失败:", e)
+        return []
+
+    out = []
+    for v in raw.values():
+        try:
+            item = json.loads(v)
+        except Exception:
+            continue
+        if kw in item.get("title", "").lower():
+            out.append(item)
+            if len(out) >= limit * 5:   # 最多先收 30 条，够筛了
+                break
+
+    # 短标题排前面（更像"你想要的"）
+    out.sort(key=lambda x: len(x.get("title", "")))
+    return out[:limit]

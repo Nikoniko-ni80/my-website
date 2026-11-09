@@ -22,13 +22,20 @@
 #   结果: 前端看到的地址一个都没变 —— 还是 POST /register、GET /my/collections。
 #   这次重构纯粹是文件层面的搬家, 行为一模一样。
 # ============================================================
+import asyncio
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from routers import users, articles, collections, feedback, history, follows, tags
+from routers import (users, articles, collections, feedback, history,
+                     follows, tags, notifications, messages, upload, orders, balance)
 from tasks import start_background_tasks
+from consumers import start_consumers
+import ws
+import sse
 # ⚠️ 这行跟上面两行【不一样】: 上面是别人写的库(pip 装的), 这个是【我自己写的文件夹】
 #   一个文件夹 + 里面有 __init__.py  =  包  =  可以被 import
 #   所以 users 就是 routers/users.py 那个文件; 用它的东西要写 users.router
@@ -43,7 +50,10 @@ from tasks import start_background_tasks
 #  新写法就是下面这个 lifespan, FastAPI 文档现在默认都用它。)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # ★ SSE 要在别的线程里推消息, 得先把事件循环存下来
+    sse.set_loop(asyncio.get_running_loop())
     start_background_tasks()
+    start_consumers()          # ★ MQ 消费者: 三个后台线程
     yield
 
 
@@ -69,3 +79,22 @@ app.include_router(feedback.router)
 app.include_router(history.router)
 app.include_router(follows.router)
 app.include_router(tags.router)
+app.include_router(notifications.router)
+app.include_router(messages.router)
+app.include_router(upload.router)
+app.include_router(orders.router)
+app.include_router(balance.router)
+app.include_router(ws.router)
+app.include_router(sse.router)
+
+# ---------- 把上传目录"公开展出" ----------
+# upload.py 把文件存进了 myapp/uploads/, 但那只是磁盘上的文件 ——
+# 浏览器直接访问 /uploads/xxx.png 是拿不到的, 除非告诉 FastAPI:
+#   "凡是以 /uploads 开头的网址, 都去这个文件夹里找文件"
+# StaticFiles 就是干这个的 (它还能处理缓存头、断点续传这些细节)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+# ⚠️ mount 的路径不能跟已有接口撞: 如果有人写了 @router.get("/uploads/xxx"),
+#    两个都会想处理这个网址, 谁先谁后就成了玄学。

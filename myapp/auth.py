@@ -1,6 +1,8 @@
 # ============================================================
 # auth.py - 安全相关: 密码加密 + JWT Token
 # ============================================================
+import os
+
 import bcrypt
 from datetime import datetime, timedelta, timezone
 from jose import jwt
@@ -13,9 +15,12 @@ from jose import jwt
 # ALGORITHM = 一个字符串, 是"签名算法的名字"(HS256 = 一种标准盖章方式)。
 #   库读到这个名字, 就用对应的算法来算签名。
 # EXPIRE_MINUTES = Token 多久过期(分钟); 60 表示 60 分钟后失效。
-SECRET_KEY = "qi-secret-key-change-me-in-real-project"
+# ★ 上线时一定要用环境变量 SECRET_KEY 换掉这串默认值。
+#   换完之后, 原来签发的 Token 全部失效 —— 所有人都得重新登录, 这是正常的。
+SECRET_KEY = os.getenv("SECRET_KEY", "qi-secret-key-change-me-in-real-project")
 ALGORITHM = "HS256"
-EXPIRE_MINUTES = 60
+# ★ 默认 60 分钟; 线上用环境变量调长 (比如 7 天), 免得写文章写到一半过期
+EXPIRE_MINUTES = int(os.getenv("TOKEN_EXPIRE_MINUTES", "60"))
 
 
 def hash_password(password: str) -> str:

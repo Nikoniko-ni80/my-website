@@ -1,0 +1,11 @@
+fastapi==0.141.1
+# [standard] 会额外装 websockets/httptools/uvloop —— 不加的话 WebSocket 握手直接 404
+uvicorn[standard]==0.52.4
+sqlalchemy==2.0.52
+pymysql==1.2.0
+redis==4.6.0
+pika==1.4.4
+python-multipart==0.0.32
+python-jose[cryptography]==3.5.0
+bcrypt==5.0.0
+pydantic==2.13.5

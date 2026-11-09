@@ -1,0 +1,9 @@
+# 构建镜像时不要塞进去的东西 (不是 .gitignore, 只对 docker build 生效)
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+uploads/
+start_mysql.bat

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import User, Article, Collection, Favorite, ArticleLike
+from routers.orders import make_preview
 from schemas import CollectionIn, FavoriteIn
 from dependencies import get_current_user
 
@@ -191,7 +192,10 @@ def list_collection_articles(
         }
 
     return [
-        {"id": a.id, "title": a.title, "content": a.content,
+        {"id": a.id, "title": a.title,
+         # ★ 付费文章只给开头 (收藏夹里也可能收着别人的付费文章)
+         "content": make_preview(a.content) if a.is_paid else a.content,
+         "is_paid": a.is_paid, "price": a.price, "cover": a.cover,
          "user_id": a.user_id,          # ★ 给前端"点作者名跳主页"用
          "author": u,
          "favorited_at": str(f),

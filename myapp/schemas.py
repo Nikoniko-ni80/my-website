@@ -64,12 +64,18 @@ class ArticleIn(BaseModel):
     title: str
     content: str = ""            # 内容可以不填(默认空字符串)
     is_public: bool = False      # 公开/私有, 默认私有
+    # ★ 付费 (第 10 步): price 单位是【分】, 传 500 就是 5 元
+    #   is_paid=True 但 price<=0 按免费处理 (后端会兜底)
+    is_paid: bool = False
+    price: int = 0
     # ★ 分类: 空字符串 = 没分类。
     #   允许空是为了兼容从前端还不传这个字段的老代码, 而且"没分类"是个合法状态。
     category: str = ""
     # ★ 标签: 一串标签名, 空列表 = 没标签
     #   后端会做规范化 + 查重 + 自动创建 (见 routers/tags.py)
     tags: list[str] = []
+    # 封面图: 相对路径 /uploads/xxx.png, 空 = 用渐变色
+    cover: str = ""
 
 # ---------- 返回给前端的文章 ----------
 class ArticleOut(BaseModel):
@@ -132,3 +138,32 @@ class ProfileIn(BaseModel):
     #   为什么 username 要特殊? 因为它【不能为空】(NOT NULL + 唯一)
     #   如果用 "" 当默认值, 前端只想改简介的时候会把用户名清空 → 数据坏了
     username: str | None = None  # 不传 = 不改用户名
+
+
+# ---------- 通知设置 (第 7 步) ----------
+class NotifySettingIn(BaseModel):
+    """改一个通知开关。"""
+    type: str                    # like / comment / reply / follow / greeting / system
+    enabled: bool = True
+
+
+class GreetingIn(BaseModel):
+    """关注自动回复。空字符串 = 关闭这个功能。"""
+    greeting: str = ""
+
+
+# ---------- 私信 (第 13 步提前做) ----------
+class MessageIn(BaseModel):
+    content: str = ""
+
+
+# ---------- 付费文章 (第 10 步) ----------
+class OrderIn(BaseModel):
+    """下单: 买哪一篇。金额不由前端传 —— 前端说多少钱就多少钱等于白送。"""
+    article_id: int
+
+
+# ---------- 站内余额 (第 10 步) ----------
+class RechargeIn(BaseModel):
+    """模拟充值。amount 单位是【分】, 传 10000 就是 100 元。"""
+    amount: int

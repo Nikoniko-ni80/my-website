@@ -36,6 +36,17 @@
         <div v-if="article.content" class="md-body" v-html="renderedContent"></div>
         <div v-else class="empty-content">（无内容）</div>
 
+        <!-- ★ 付费文章: 没买时只返回前 300 字, 这里显示解锁入口 -->
+        <div v-if="article.locked" class="paywall">
+          <p class="pw-label">付费文章</p>
+          <p class="pw-price">¥{{ (article.price / 100).toFixed(2) }}</p>
+          <button class="pw-btn" :disabled="buyBusy" @click="startBuy">
+            {{ buyBusy ? '处理中…' : '解锁全文' }}
+          </button>
+          <p class="pw-tip">购买后永久可读</p>
+        </div>
+        <p v-else-if="article.purchased" class="pw-owned">✓ 已购买，可阅读全文</p>
+
         <!-- ★ 标签: 点一下 → 跳到该标签的列表页 (不是搜索框) -->
         <div v-if="article.tags && article.tags.length" class="tag-list">
           <span class="tag-list-label">标签</span>
@@ -179,7 +190,7 @@
       <aside class="side">
         <div class="ac card">
           <div class="ac-avatar" @click="goAuthor">
-            <img v-if="article.author_avatar" :src="article.author_avatar" alt="" />
+            <img v-if="article.author_avatar" :src="mediaUrl(article.author_avatar)" alt="" />
             <span v-else><IconUser /></span>
           </div>
           <p class="ac-name" @click="goAuthor">{{ article.author }}</p>
@@ -243,6 +254,25 @@
           <button class="danger" @click="doDelete">确定删除</button>
         </div>
       </Modal>
+
+      <!-- 支付弹窗（模拟支付） -->
+      <Modal v-model="showPay" title="确认支付">
+        <p class="pay-book">《{{ article.title }}》</p>
+        <p class="pay-amount">¥{{ ((order?.amount || 0) / 100).toFixed(2) }}</p>
+        <p class="pay-balance">当前余额：¥{{ (balance / 100).toFixed(2) }}</p>
+        <p v-if="payMsg" class="pay-msg">{{ payMsg }}</p>
+        <div class="recharge-row">
+          <button class="recharge-btn" :disabled="rechargeBusy" @click="doRecharge">
+            {{ rechargeBusy ? '充值中…' : '充值 ¥100（模拟）' }}
+          </button>
+        </div>
+        <div class="m-btns">
+          <button class="cancel" @click="showPay = false">取消</button>
+          <button class="pay-btn" :disabled="payBusy" @click="doPay">
+            {{ payBusy ? '支付中…' : '我付好了' }}
+          </button>
+        </div>
+      </Modal>
     </template>
 
     <p v-else class="err">{{ error || '文章不存在或未公开' }}</p>
@@ -257,8 +287,10 @@ import {
   getMe, followUser, unfollowUser, getFollowStatus,
   deleteComment, likeComment, unlikeComment,
   likeArticle, unlikeArticle,
-  getPublicArticles, getUserProfile
+  getPublicArticles, getUserProfile,
+  createOrder, payOrder, getBalance, recharge
 } from '../services/authApi.js'
+import { mediaUrl } from '../utils/media.js'
 import { renderMarkdown } from '../utils/markdown.js'
 import Modal from './Modal.vue'
 import CollectionPicker from './CollectionPicker.vue'
@@ -280,6 +312,81 @@ const newComment = ref('')
 const loading = ref(false)
 const error = ref('')
 const isLogin = ref(!!localStorage.getItem('token'))
+
+// ================= 付费文章: 购买 =================
+const buyBusy = ref(false)        // 下单请求中
+const showPay = ref(false)        // 支付弹窗
+const order = ref(null)           // 当前订单 {order_id, amount, ...}
+const balance = ref(0)            // 我的余额(分)
+const payBusy = ref(false)
+const payMsg = ref('')            // 弹窗里的提示(错误/成功)
+const rechargeBusy = ref(false)
+
+const authToken = () => localStorage.getItem('token')
+
+const loadBalance = async () => {
+  try {
+    const r = await getBalance(authToken())
+    balance.value = r.data.balance || 0
+  } catch (e) { /* 拿不到就先按 0 显示 */ }
+}
+
+// 点"解锁全文": 先下单, 再弹支付窗
+const startBuy = async () => {
+  if (!isLogin.value) { goLogin(router); return }
+  buyBusy.value = true
+  payMsg.value = ''
+  try {
+    const res = await createOrder(authToken(), articleId)
+    if (res.data.error) {
+      payMsg.value = res.data.error
+      showPay.value = true
+      return
+    }
+    order.value = res.data
+    await loadBalance()
+    showPay.value = true
+  } catch (e) {
+    payMsg.value = '下单失败：' + e.message
+    showPay.value = true
+  } finally {
+    buyBusy.value = false
+  }
+}
+
+// 点"我付好了": 支付(扣余额) → 重新拉文章, locked 变 false
+const doPay = async () => {
+  if (!order.value) return
+  payBusy.value = true
+  payMsg.value = ''
+  try {
+    const res = await payOrder(authToken(), order.value.order_id)
+    if (res.data.error) { payMsg.value = res.data.error; return }
+    showPay.value = false
+    const r = await getArticle(articleId, authToken())
+    if (!r.data.error) article.value = r.data
+    loadBalance()
+  } catch (e) {
+    payMsg.value = '支付失败：' + e.message
+  } finally {
+    payBusy.value = false
+  }
+}
+
+// 余额不足时的模拟充值
+const doRecharge = async () => {
+  rechargeBusy.value = true
+  try {
+    const r = await recharge(authToken(), 10000)   // 100 元 = 10000 分
+    if (r.data.error) { payMsg.value = r.data.error; return }
+    await loadBalance()
+    payMsg.value = '充值成功'
+  } catch (e) {
+    payMsg.value = '充值失败：' + e.message
+  } finally {
+    rechargeBusy.value = false
+  }
+}
 
 // ---- 页面下半部分: 让看完正文的人还有地方去 ----
 const related = ref([])          // 同分类的其他文章
@@ -994,4 +1101,43 @@ hr { border: none; border-top: 1px solid #eef1f6; margin: 18px 0; }
 .m-btns .danger:hover { background: #c0392b; }
 
 .err { text-align: center; color: #a8b2c1; padding: 60px 0; }
+
+/* ===== 付费文章 ===== */
+.paywall {
+  margin-top: 18px;
+  padding: 26px 20px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f0fdfa 0%, #f8fafc 100%);
+  border: 1px dashed #99f6e4;
+  text-align: center;
+}
+.pw-label { font-size: 12px; color: #0f766e; letter-spacing: 2px; }
+.pw-price { font-size: 30px; font-weight: 800; color: #0f766e; margin: 6px 0 14px; }
+.pw-btn {
+  padding: 10px 30px; border: none; border-radius: 10px;
+  background: #14b8a6; color: #fff; font-size: 15px; font-weight: 600;
+  cursor: pointer; font-family: inherit; transition: background .15s;
+}
+.pw-btn:hover:not(:disabled) { background: #0d9488; }
+.pw-btn:disabled { opacity: .5; cursor: default; }
+.pw-tip { margin-top: 10px; font-size: 12px; color: #9aa5b1; }
+.pw-owned { margin-top: 14px; font-size: 12px; color: #0f766e; }
+
+.pay-book { font-size: 13px; color: #64748b; margin-bottom: 6px; }
+.pay-amount { font-size: 28px; font-weight: 800; color: #0f766e; text-align: center; }
+.pay-balance { font-size: 12px; color: #94a3b8; text-align: center; margin-top: 4px; }
+.pay-msg { font-size: 12px; color: #c0392b; text-align: center; margin-top: 8px; }
+.recharge-row { text-align: center; margin-top: 12px; }
+.recharge-btn {
+  padding: 6px 14px; border: 1px solid #e6ebf2; border-radius: 9px;
+  background: #fff; color: #64748b; font-size: 12px;
+  cursor: pointer; font-family: inherit;
+}
+.recharge-btn:hover:not(:disabled) { border-color: #14b8a6; color: #0f766e; }
+.pay-btn {
+  padding: 8px 18px; border-radius: 9px; border: none;
+  background: #14b8a6; color: #fff; font-size: 13px;
+  cursor: pointer; font-family: inherit;
+}
+.pay-btn:disabled { opacity: .5; cursor: default; }
 </style>

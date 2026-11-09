@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import User, Article, Follow
+from routers.orders import make_preview
 from schemas import UserRegister, UserLogin, ProfileIn
 from cache import redis_client          # ★ 改用户名后要清这个缓存
 from auth import hash_password, verify_password, create_token
@@ -109,7 +110,10 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
         "bio":        u.bio,
         "created_at": str(u.created_at) if u.created_at else "",
         "articles": [
-            {"id": a.id, "title": a.title, "content": a.content,
+            {"id": a.id, "title": a.title,
+             # ★ 付费文章只给开头: 这里是公开主页, 谁都看得到
+             "content": make_preview(a.content) if a.is_paid else a.content,
+             "is_paid": a.is_paid, "price": a.price, "cover": a.cover,
              "created_at": str(a.created_at)}
             for a in arts
         ],
