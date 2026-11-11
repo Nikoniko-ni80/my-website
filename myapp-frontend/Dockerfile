@@ -31,6 +31,7 @@ FROM nginx:1.27-alpine
 
 # 用我们自己的配置替换掉 nginx 自带的那份
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY site-locations.conf /etc/nginx/site-locations.conf
 
 # 把编译产物拷进 nginx 的网站根目录
 COPY --from=build /app/dist /usr/share/nginx/html

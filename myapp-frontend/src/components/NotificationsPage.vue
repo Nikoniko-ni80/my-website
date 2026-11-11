@@ -37,6 +37,23 @@
 
       <!-- ================= 右栏: 内容 ================= -->
       <section class="main card">
+        <!-- 私信入口: 放在最上面, 一眼能看到 -->
+        <div class="pm-entry" @click="$router.push('/messages')">
+          <div class="pm-left">
+            <span class="pm-ico">✉️</span>
+            <div>
+              <p class="pm-title">私信</p>
+              <p class="pm-sub">和站内用户一对一聊天</p>
+            </div>
+          </div>
+          <span class="pm-right">
+            <span v-if="stats.message_unread > 0" class="pm-badge">
+              {{ stats.message_unread > 99 ? '99+' : stats.message_unread }} 条未读
+            </span>
+            <span v-else>去聊天 →</span>
+          </span>
+        </div>
+
         <!-- ---------- 列表 ---------- -->
         <template v-if="view === 'list'">
           <div class="main-head">
@@ -344,6 +361,28 @@ onUnmounted(() => window.removeEventListener('notify-push', onPush))
 
 <style scoped>
 .notif-page { max-width: 1080px; }
+
+/* 私信入口 */
+.pm-entry {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  margin: 16px 18px 6px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f0fdfa 0%, #ffffff 70%);
+  border: 1px solid #ccfbf1;
+  cursor: pointer;
+  transition: all 0.16s;
+}
+.pm-entry:hover { border-color: #14b8a6; transform: translateY(-1px); }
+.pm-left { display: flex; align-items: center; gap: 12px; }
+.pm-ico { font-size: 20px; }
+.pm-title { font-size: 14px; font-weight: 700; color: #1f2937; }
+.pm-sub { font-size: 11px; color: #9aa5b1; margin-top: 2px; }
+.pm-right { font-size: 12px; color: #0f766e; flex-shrink: 0; }
+.pm-badge {
+  display: inline-block; padding: 3px 9px; border-radius: 12px;
+  background: #e74c3c; color: #fff; font-size: 11px; font-weight: 600;
+}
 
 /* 左栏 + 右栏 */
 .layout {

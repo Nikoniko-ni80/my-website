@@ -124,9 +124,16 @@ services:
     restart: unless-stopped
     depends_on:
       - backend
+    volumes:
+      # Let's Encrypt 验证文件
+      - ./deploy/certbot-www:/var/www/certbot:ro
+      # 证书文件
+      - ./deploy/letsencrypt:/etc/nginx/certs:ro
     ports:
       # 本机默认 8080; 服务器上在 .env 里写 WEB_PORT=80 就直接用 80 端口
       - "${WEB_PORT:-8080}:80"
+      # HTTPS
+      - "443:443"
 
 volumes:
   mysql_data:

@@ -37,6 +37,20 @@
       </div>
     </div>
 
+    <!-- 本站介绍: 第一次来的人先知道这里是干什么的 -->
+    <section class="intro card">
+      <div class="intro-text">
+        <h1>技术笔记</h1>
+        <p>记录后端开发、数据库、消息队列和 AI 的学习与实践。可以读文章、收藏、关注作者，也可以直接问站内 AI 助手。</p>
+        <div class="intro-feats">
+          <span>📚 技术文章</span>
+          <span>🔥 热榜</span>
+          <span>✨ AI 助手</span>
+        </div>
+      </div>
+      <div class="intro-mark">✍️</div>
+    </section>
+
     <!-- 轮播 banner -->
     <div class="banner" @mouseenter="stopAuto" @mouseleave="startAuto">
       <!-- 三张幻灯片叠在一起, 靠 opacity 切换 (不是靠 v-if 增删) -->
@@ -425,6 +439,22 @@ onUnmounted(stopAuto)
   box-shadow: 0 2px 10px rgba(20, 184, 166, 0.06);
   margin-bottom: 20px;
 }
+/* 本站介绍 */
+.intro {
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  padding: 22px 26px; margin-bottom: 18px;
+  background: linear-gradient(135deg, #f0fdfa 0%, #ffffff 65%);
+  border: 1px solid rgba(20, 184, 166, 0.12);
+}
+.intro h1 { font-size: 22px; color: #0f766e; margin-bottom: 8px; }
+.intro p { font-size: 13.5px; color: #4b5563; line-height: 1.7; max-width: 760px; }
+.intro-feats { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+.intro-feats span {
+  font-size: 12px; color: #0f766e; background: #ccfbf1;
+  padding: 4px 10px; border-radius: 12px;
+}
+.intro-mark { font-size: 44px; opacity: 0.35; flex-shrink: 0; }
+
 .search {
   flex: 1; max-width: 460px;
   display: flex; align-items: center; gap: 8px;
@@ -785,6 +815,9 @@ onUnmounted(stopAuto)
   .about { grid-column: span 2; }
 }
 @media (max-width: 720px) {
+  .intro { padding: 16px; }
+  .intro h1 { font-size: 18px; }
+  .intro-mark { display: none; }
   .topbar { flex-direction: column; align-items: stretch; gap: 14px; }
   .search-wrap { max-width: none; }
   .cats { flex-wrap: wrap; }

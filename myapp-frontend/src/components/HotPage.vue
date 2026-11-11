@@ -38,16 +38,8 @@
               {{ a.author }}
             </span>
             <span class="sep">·</span>
-            <span class="heat">🔥 {{ a.heat }}</span>
-            <span class="sep">·</span>
             <span>👍 {{ a.like_count }}</span>
           </div>
-        </div>
-
-        <!-- 右侧大数字: 一眼看到热度 -->
-        <div class="hot-score">
-          <span class="num">{{ a.heat }}</span>
-          <span class="unit">热度</span>
         </div>
       </div>
     </div>
@@ -221,32 +213,5 @@ onMounted(() => load())
 }
 .hot-meta .author:hover {
   text-decoration: underline;
-}
-.hot-meta .heat {
-  color: #f59e0b;
-  font-weight: 600;
-}
-
-/* ---- 右侧热度大数字 ---- */
-.hot-score {
-  flex-shrink: 0;
-  width: 62px;
-  text-align: right;
-}
-.hot-score .num {
-  display: block;
-  font-size: 20px;
-  font-weight: 700;
-  color: #f59e0b;
-  line-height: 1.1;
-}
-.hot-score .unit {
-  font-size: 10px;
-  color: #cbd5e1;
-}
-
-/* ---- 手机: 右边的数字藏起来, 给标题留地方 ---- */
-@media (max-width: 640px) {
-  .hot-score { display: none; }
 }
 </style>

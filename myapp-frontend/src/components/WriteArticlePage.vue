@@ -155,6 +155,33 @@ print('代码块')
       </div>
     </div>
 
+    <!-- 图片墙: 一次传多张, 点缩略图插入正文 (朋友圈那种感觉) -->
+    <div class="img-wall">
+      <div class="wall-head">
+        <span class="wall-title">🖼 正文图片</span>
+        <button type="button" class="wall-pick" :disabled="wallBusy" @click="pickWallImages">
+          {{ wallBusy ? '上传中…' : '上传图片' }}
+        </button>
+        <input
+          ref="wallInput"
+          type="file"
+          multiple
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          hidden
+          @change="onPickWallImages"
+        />
+        <span class="wall-hint">上传后点缩略图，插入到光标位置</span>
+      </div>
+
+      <div v-if="wallImages.length" class="wall-grid">
+        <div v-for="(img, i) in wallImages" :key="img.url" class="wall-item">
+          <img :src="mediaUrl(img.url)" alt="" @click="insertWallImage(img.url)" />
+          <button type="button" class="wall-rm" title="移除" @click="removeWallImage(i)">✕</button>
+        </div>
+      </div>
+      <p v-else class="wall-empty">还没有图片，可以一次选多张上传</p>
+    </div>
+
     <p class="msg" v-if="msg">{{ msg }}</p>
   </div>
 </template>
@@ -353,6 +380,42 @@ const imgInput = ref(null)
 const imgBusy = ref(false)
 
 const pickImage = () => { if (imgInput.value) imgInput.value.click() }
+
+// ---------- 图片墙: 批量上传 + 缩略图 ----------
+const wallInput = ref(null)
+const wallImages = ref([])      // [{ url: '/uploads/xxx.png' }]
+const wallBusy = ref(false)
+
+const pickWallImages = () => { if (wallInput.value) wallInput.value.click() }
+
+const onPickWallImages = async (e) => {
+  const files = [...(e.target.files || [])].filter(f => f.type.startsWith('image/'))
+  e.target.value = ''
+  if (!files.length) return
+
+  const token = localStorage.getItem('token')
+  if (!token) { goLogin(router); return }
+
+  wallBusy.value = true
+  try {
+    for (const f of files) {
+      const res = await uploadFile(token, f)
+      if (res.data.error) { msg.value = res.data.error; continue }
+      wallImages.value.push({ url: res.data.url })
+    }
+  } catch (err) {
+    msg.value = '图片上传失败：' + err.message
+  }
+  wallBusy.value = false
+}
+
+const insertWallImage = (url) => {
+  insertAtCursor(`\n![图片](${url})\n`)
+}
+
+const removeWallImage = (i) => {
+  wallImages.value.splice(i, 1)
+}
 
 // ★ 粘贴 / 拖入图片：直接上传并插入 Markdown（CSDN 那种体验）
 const uploadAndInsert = async (files) => {
@@ -674,6 +737,42 @@ const handleDone = async () => {
 
 .msg { text-align: center; color: #e74c3c; margin-top: 12px; }
 
+/* ===== 正文图片墙 ===== */
+.img-wall {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid #eef1f6; border-radius: 14px;
+  background: #fff;
+}
+.wall-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.wall-title { font-size: 13px; font-weight: 600; color: #374151; }
+.wall-pick {
+  padding: 5px 12px; border-radius: 14px;
+  border: 1px solid #14b8a6; background: #fff; color: #0f766e;
+  font-size: 12px; cursor: pointer;
+}
+.wall-pick:hover { background: #f0fdfa; }
+.wall-pick:disabled { opacity: 0.6; cursor: not-allowed; }
+.wall-hint { font-size: 11px; color: #9aa5b1; }
+.wall-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, 86px);
+  gap: 10px; margin-top: 12px;
+}
+.wall-item { position: relative; width: 86px; height: 86px; }
+.wall-item img {
+  width: 100%; height: 100%; object-fit: cover;
+  border-radius: 10px; border: 1px solid #eef1f6;
+  cursor: pointer; transition: transform 0.15s;
+}
+.wall-item img:hover { transform: scale(1.04); border-color: #14b8a6; }
+.wall-rm {
+  position: absolute; top: -6px; right: -6px;
+  width: 20px; height: 20px; border-radius: 50%;
+  border: none; background: #e74c3c; color: #fff;
+  font-size: 11px; line-height: 20px; cursor: pointer; padding: 0;
+}
+.wall-empty { font-size: 12px; color: #b6c0cc; margin-top: 10px; }
+
 /* ===== 封面 ===== */
 .cover-row { display: flex; align-items: center; gap: 16px; margin: 14px 0 4px; }
 .cover-box {
@@ -696,4 +795,16 @@ const handleDone = async () => {
 }
 .cover-rm:hover { color: #e74c3c; }
 .cover-hint { font-size: 11px; color: #b6c0cc; }
+
+/* ---- 手机: 编辑/预览上下排, 工具栏换行 ---- */
+@media (max-width: 720px) {
+  .panes { flex-direction: column; min-height: 0; gap: 12px; }
+  .pane { min-height: 260px; }
+  .toolbar { flex-wrap: wrap; }
+  .toolbar .tip { display: none; }
+  .cover-row { flex-wrap: wrap; }
+  .cover-box { width: 140px; height: 80px; }
+  .wall-grid { grid-template-columns: repeat(auto-fill, 72px); }
+  .wall-item { width: 72px; height: 72px; }
+}
 </style>

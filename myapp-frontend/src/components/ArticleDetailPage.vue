@@ -170,17 +170,17 @@
       <div v-if="related.length" class="related card">
         <h3 class="rel-title">📚 相关阅读</h3>
         <div class="rel-grid">
-          <div
+          <router-link
             v-for="r in related" :key="r.id"
+            :to="`/article/${r.id}`"
             class="rel-item"
-            @click="goArticle(r.id)"
           >
             <p class="rel-name">{{ r.title }}</p>
             <div class="rel-meta">
               <span class="rel-author">{{ r.author }}</span>
               <span>👍 {{ r.like_count || 0 }}</span>
             </div>
-          </div>
+          </router-link>
         </div>
       </div>
 
@@ -863,6 +863,7 @@ const recordHistory = async () => {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;
 }
 .rel-item {
+  display: block; text-decoration: none; color: inherit;
   padding: 12px 14px; border-radius: 12px;
   background: #f8fafc; border: 1px solid transparent;
   cursor: pointer; transition: all 0.16s;

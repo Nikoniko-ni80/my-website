@@ -44,7 +44,14 @@ const routes = [
 
 const router = createRouter({
   history: createWebHashHistory(),
-  routes
+  routes,
+  // ★ 每次切页面都回到顶部。
+  //   不加的话, 从文章底部点作者/相关阅读, 新页面会停在原来的滚动位置,
+  //   手机上看起来就像"打开了一半"。
+  scrollBehavior(to, from, savedPosition) {
+    if (savedPosition) return savedPosition
+    return { top: 0 }
+  }
 })
 
 export default router

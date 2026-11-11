@@ -47,3 +47,8 @@ myapp/uploads/
 # ---------- 数据库导出 ----------
 # 里面有用户数据(密码哈希、私信), 不进仓库; 需要时用 mysqldump 现导
 deploy/mysql-init/*.sql
+
+# ---------- HTTPS 证书 / ACME 验证文件 ----------
+# 证书私钥绝对不能进仓库
+deploy/letsencrypt/
+deploy/certbot-www/

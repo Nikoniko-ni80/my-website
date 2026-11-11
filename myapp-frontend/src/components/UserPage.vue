@@ -109,6 +109,12 @@
             <p class="u-name">{{ u.username }}</p>
             <p class="u-bio">{{ u.bio || '这个人很懒～' }}</p>
           </div>
+          <!-- 看自己的关注列表时，可以直接取关 -->
+          <button
+            v-if="isMe && listTab === 'following'"
+            class="u-unfollow"
+            @click.stop="unfollowFromList(u)"
+          >取关</button>
         </div>
       </div>
 
@@ -224,6 +230,22 @@ const toggleFollow = async () => {
     error.value = '操作失败：' + e.message
   }
   followBusy.value = false
+}
+
+// 在自己的关注列表里直接取关
+const unfollowFromList = async (u) => {
+  const token = localStorage.getItem('token')
+  if (!token) { goLogin(router); return }
+  try {
+    const res = await unfollowUser(token, u.id)
+    if (res.data.error) { error.value = res.data.error; return }
+    listData.value = listData.value.filter((x) => x.id !== u.id)
+    if (user.value) {
+      user.value.following_count = Math.max(0, user.value.following_count - 1)
+    }
+  } catch (e) {
+    error.value = '取关失败：' + e.message
+  }
 }
 
 // ---- 私信 ----
@@ -475,6 +497,13 @@ onMounted(load)
 .u-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .u-text { flex: 1; min-width: 0; }
 .u-name { font-size: 14px; color: #374151; font-weight: 500; }
+.u-unfollow {
+  flex-shrink: 0; margin-left: auto;
+  padding: 5px 12px; border-radius: 14px;
+  border: 1px solid #e6ebf2; background: #fff;
+  color: #6b7280; font-size: 12px; cursor: pointer;
+}
+.u-unfollow:hover { color: #e74c3c; border-color: #fca5a5; background: #fef2f2; }
 .u-bio {
   font-size: 12px; color: #9aa5b1; margin-top: 3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -600,4 +629,30 @@ onMounted(load)
 .av-hint { font-size: 11px; color: #b6c0cc; }
 
 .cover-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* ---- 手机: 名片改成上下排, 按钮占满一行 ---- */
+@media (max-width: 640px) {
+  .page { padding: 14px 12px 40px; }
+  .back { margin-bottom: 10px; }
+
+  .profile {
+    flex-wrap: wrap;
+    padding: 18px 16px;
+    gap: 14px;
+    margin-bottom: 18px;
+  }
+  .avatar { width: 56px; height: 56px; font-size: 26px; }
+  .info { flex: 1 1 calc(100% - 70px); }
+  .name { font-size: 18px; margin-bottom: 6px; }
+  .counts { gap: 10px 14px; font-size: 12px; }
+  .joined { margin-left: 0; flex-basis: 100%; }
+
+  .actions { width: 100%; }
+  .actions button { flex: 1; }
+
+  .item { padding: 12px 12px; gap: 10px; }
+  .cover { width: 46px; height: 46px; }
+  .t { font-size: 14px; }
+  .c { font-size: 12px; }
+}
 </style>
