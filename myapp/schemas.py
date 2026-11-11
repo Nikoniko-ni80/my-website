@@ -167,3 +167,19 @@ class OrderIn(BaseModel):
 class RechargeIn(BaseModel):
     """模拟充值。amount 单位是【分】, 传 10000 就是 100 元。"""
     amount: int
+
+
+# ---------- AI 助手 (第 11 步) ----------
+class AiMessage(BaseModel):
+    """一条对话消息: role 只能是 user / assistant / system。"""
+    role: str
+    content: str
+
+
+class AiChatIn(BaseModel):##一个AiChatIn包含了很多AiMessage
+    """POST /ai/chat 的请求体。
+
+    messages 是最近几轮对话; max_tokens 限制这次回答长度 (费用上限)。
+    """
+    messages: list[AiMessage]
+    max_tokens: int = 800

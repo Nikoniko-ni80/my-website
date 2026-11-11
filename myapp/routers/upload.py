@@ -66,6 +66,7 @@ def looks_like_image(ext: str, data: bytes) -> bool:
     return any(data.startswith(sig) for sig in ALLOWED.get(ext, []))
 
 
+##收一个图片文件 → 检查 → 用随机名存到磁盘 → 返回
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),                 # 表单里的文件字段, 名字叫 file
@@ -91,7 +92,7 @@ async def upload_file(
     # ④ 存盘: 随机名字 + 原后缀
     name = uuid.uuid4().hex + ext
     path = os.path.join(UPLOAD_DIR, name)
-    with open(path, "wb") as f:
+    with open(path, "wb") as f:  #with ... as f  打开文件，with 块结束时自动关闭，就算中间报错也会关。
         f.write(content)
 
     return {

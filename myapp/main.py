@@ -31,7 +31,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from routers import (users, articles, collections, feedback, history,
-                     follows, tags, notifications, messages, upload, orders, balance)
+                     follows, tags, notifications, messages, upload, orders, balance,
+                     ai)
 from tasks import start_background_tasks
 from consumers import start_consumers
 import ws
@@ -86,6 +87,7 @@ app.include_router(orders.router)
 app.include_router(balance.router)
 app.include_router(ws.router)
 app.include_router(sse.router)
+app.include_router(ai.router)
 
 # ---------- 把上传目录"公开展出" ----------
 # upload.py 把文件存进了 myapp/uploads/, 但那只是磁盘上的文件 ——

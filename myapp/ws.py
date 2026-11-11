@@ -86,7 +86,7 @@ def user_from_token(token: str):
     finally:
         db.close()
 
-
+##下面是一条连接的生命周期——验人 → 登记 → 挂着等 → 断开清理。就是组装之前的方法
 @router.websocket("/ws/chat")
 async def chat_ws(ws: WebSocket, token: str = ""):
     """聊天推送通道。
@@ -99,16 +99,20 @@ async def chat_ws(ws: WebSocket, token: str = ""):
         await ws.close(code=1008)          # 未授权, 拒绝握手
         return
 
-    await manager.connect(user["id"], ws)
+    await manager.connect(user["id"], ws)##建立连接
+    ##！！！注意，异步是说我的这个执行过程中可以执行chat_ws以外的东西，不是说可以执行下面的try
     try:
         while True:
             # 我们不需要客户端发内容, 但必须一直读:
             #   ① 感知"对方断开了" (断开时这里会抛 WebSocketDisconnect)
             #   ② 顺手支持心跳: 客户端发 ping, 回 pong
-            msg = await ws.receive_text()
+            msg = await ws.receive_text()##等客户端发文本；收到就返回
             if msg == "ping":
                 await ws.send_text("pong")
-    except WebSocketDisconnect:
+                ##心跳pingpong是我的服务器为了确保连接一直在要不断发的空请求交互
+    except WebSocketDisconnect:##except = "如果 try 里出错，跳到这里处理"。
         pass
-    finally:
+    finally:##finally就是不论如何都会进行，无论是走到上面的exept还是函数出错了
+            ##服务器出错也要死之前执行
+
         manager.disconnect(user["id"], ws)
