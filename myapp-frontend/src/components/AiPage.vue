@@ -12,10 +12,21 @@
           :class="{ active: c.id === conversationId }"
           @click="openConversation(c.id)"
         >
-          <span class="conv-title">{{ c.title }}</span>
-          <span class="conv-ops">
-            <button title="改名" @click.stop="renameConv(c)">✎</button>
-            <button title="删除" @click.stop="removeConv(c)">✕</button>
+          <input
+            v-if="editingId === c.id"
+            ref="editInput"
+            v-model="editingTitle"
+            class="conv-edit"
+            @click.stop
+            @keydown.enter.prevent="saveRename(c)"
+            @keydown.esc.prevent="cancelRename"
+            @blur="saveRename(c)"
+          />
+          <span v-else class="conv-title">{{ c.title }}</span>
+
+          <span v-if="editingId !== c.id" class="conv-ops">
+            <button title="改名" @click.stop="startRename(c)">✎</button>
+            <button title="删除" @click.stop="askRemove(c)">✕</button>
           </span>
         </div>
         <p v-if="!conversations.length" class="conv-empty">还没有对话</p>
@@ -68,6 +79,22 @@
         <button v-else class="stop-btn" @click="stop">停止</button>
       </div>
     </section>
+
+    <!-- 删除确认小窗（不用浏览器自带的 confirm） -->
+    <div v-if="pendingDelete" class="modal-mask" @click.self="pendingDelete = null">
+      <div class="modal-box">
+        <h4>删除这次对话？</h4>
+        <p class="modal-text">
+          「{{ pendingDelete.title }}」以及里面的聊天记录会一起删掉，删了找不回来。
+        </p>
+        <div class="modal-actions">
+          <button class="ghost" @click="pendingDelete = null">取消</button>
+          <button class="danger" :disabled="deleting" @click="confirmDelete">
+            {{ deleting ? '删除中…' : '删除' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -152,22 +179,51 @@ const newConversation = async () => {
   }
 }
 
-const renameConv = async (c) => {
-  const title = window.prompt('新的标题', c.title)
-  if (!title || !title.trim()) return
+// ---------- 改名：点 ✎ 直接在列表里变成输入框 ----------
+const editingId = ref(null)      // 正在改哪一条
+const editingTitle = ref('')
+const editInput = ref(null)
+
+const startRename = async (c) => {
+  editingId.value = c.id
+  editingTitle.value = c.title
+  await nextTick()
+  const el = Array.isArray(editInput.value) ? editInput.value[0] : editInput.value
+  if (el) { el.focus(); el.select() }
+}
+
+const cancelRename = () => {
+  editingId.value = null
+  editingTitle.value = ''
+}
+
+const saveRename = async (c) => {
+  if (editingId.value !== c.id) return      // 已经被别的事件处理过了
+  const title = editingTitle.value.trim()
+  cancelRename()
+  if (!title || title === c.title) return   // 没改 / 改成空, 直接取消
   try {
-    await renameConversation(token(), c.id, title.trim())
+    await renameConversation(token(), c.id, title)
     await loadConversations()
   } catch (e) {
     error.value = e.message
   }
 }
 
-const removeConv = async (c) => {
-  if (!window.confirm(`删除「${c.title}」？聊天记录会一起删掉`)) return
+// ---------- 删除：先弹自己的小窗 ----------
+const pendingDelete = ref(null)   // 等着删的那条会话
+const deleting = ref(false)
+
+const askRemove = (c) => { pendingDelete.value = c }
+
+const confirmDelete = async () => {
+  const c = pendingDelete.value
+  if (!c) return
+  deleting.value = true
   try {
     await deleteConversation(token(), c.id)
     const wasActive = conversationId.value === c.id
+    pendingDelete.value = null
     await loadConversations()
     if (wasActive) {
       if (conversations.value.length) await openConversation(conversations.value[0].id)
@@ -175,6 +231,8 @@ const removeConv = async (c) => {
     }
   } catch (e) {
     error.value = e.message
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -322,6 +380,61 @@ onUnmounted(() => {
 }
 .conv-ops button:hover { color: #0f766e; }
 .conv-empty { font-size: 12px; color: #9aa5b1; padding: 8px 10px; }
+
+/* 改名时变成输入框 */
+.conv-edit {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #14b8a6;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  background: #fff;
+  color: #2c3e50;
+}
+
+/* ---------- 删除确认小窗 ---------- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 24, 39, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+.modal-box {
+  width: 320px;
+  max-width: calc(100vw - 40px);
+  background: #fff;
+  border-radius: 16px;
+  padding: 20px 20px 16px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.18);
+}
+.modal-box h4 { font-size: 15px; color: #1f2937; margin-bottom: 8px; }
+.modal-text {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #5b6673;
+  margin-bottom: 18px;
+  overflow-wrap: anywhere;
+}
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.modal-actions button {
+  height: 34px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+}
+.modal-actions .ghost { background: #f1f5f9; color: #475569; }
+.modal-actions .ghost:hover { background: #e2e8f0; }
+.modal-actions .danger { background: #ef4444; color: #fff; }
+.modal-actions .danger:hover { background: #dc2626; }
+.modal-actions .danger:disabled { background: #fca5a5; cursor: default; }
 
 /* ---------- 右侧聊天 ---------- */
 .chat-main {
