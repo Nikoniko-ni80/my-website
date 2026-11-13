@@ -55,16 +55,14 @@
 // ============================================================
 import { API_BASE } from './authApi.js'
 
-//下面这个东西同时执行发送和接收请求，就是站在前端的角度，先发送请求然后接收响应
-export async function streamChat(token, messages, { onDelta, onDone, onError, signal } = {}) {
-//export就是可以被前端vue import的函数  token登录凭证， message对话记录  后面的{}是对象啥的
-//比如后面我前端调用这个函数
-//streamChat(token, messages, {
-//  onDelta: (text) => { 显示文字 },
-//  onDone: () => { 停止转圈 },
-//  onError: (msg) => { 显示错误 },
-//})
-//就会给这一崔函数，这种函数比如onDelta，里面有我加的参数text和他内部的方法函数“显示文字”
+// ============================================================
+// 【内部工具】发一次流式请求, 并把 SSE 一段段读出来
+//   url  : 请求地址
+//   body : 请求体 (普通 JSON 对象)
+// 两个对外的函数 (streamChat / streamChatInConversation) 都调它,
+// 区别只是 url 和 body 不同 —— 读流的代码只写一份
+// ============================================================
+async function _sendAndRead(url, body, token, { onDelta, onDone, onError, signal } = {}) {
   let finished = false
 
   const finish = () => {    //一个变量名叫finish，下面{}是变量内部装的函数
@@ -83,13 +81,13 @@ export async function streamChat(token, messages, { onDelta, onDone, onError, si
 
   let res
   try {
-    res = await fetch(`${API_BASE}/ai/chat`, {//发请求，res是后端响应返回的东西
+    res = await fetch(url, {//发请求，res是后端响应返回的东西
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify(body),
       signal,
     })
   } catch (err) {
@@ -189,3 +187,75 @@ export async function streamChat(token, messages, { onDelta, onDone, onError, si
     try { reader.releaseLock() } catch (e) { /* 忽略 */ }
   }
 }
+
+
+// ============================================================
+// 【对外】老接口: /ai/chat
+//   一次性的, 不落库。前端自己把历史传上去。
+// ============================================================
+export function streamChat(token, messages, handlers = {}) {
+  return _sendAndRead(`${API_BASE}/ai/chat`, { messages }, token, handlers)
+}
+
+
+// ============================================================
+// 【对外】新接口: /ai/conversations/{id}/chat
+//   把一句话发给某个会话, 后端自己查历史、自己存库。
+//   前端只发 content —— 不用再拼 messages 数组了。
+// ============================================================
+export function streamChatInConversation(token, conversationId, content, handlers = {}) {
+  return _sendAndRead(
+    `${API_BASE}/ai/conversations/${conversationId}/chat`,
+    { content },
+    token,
+    handlers,
+  )
+}
+
+
+// ============================================================
+// 【会话管理】五个普通接口 (不是流, 用不着 fetch 读流那一套)
+// ============================================================
+// 统一的小工具: 发请求 → 解析 JSON → 出错就抛 Error(人话)
+async function _json(path, { method = 'GET', token, body } = {}) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+
+  if (res.status === 401) throw new Error('登录已过期，请重新登录')
+  if (res.status === 404) throw new Error('对话不存在')
+  if (!res.ok) {
+    let msg = '操作失败，请稍后再试'
+    try {
+      const data = await res.json()
+      if (data.detail) msg = data.detail
+      if (data.error) msg = data.error
+    } catch (e) { /* 忽略 */ }
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
+// 我的会话列表 (最近聊过的在前)
+export const listConversations = (token) => _json('/ai/conversations', { token })
+
+// 新建一个会话
+export const createConversation = (token, title = '') =>
+  _json('/ai/conversations', { method: 'POST', token, body: { title } })
+
+// 改名
+export const renameConversation = (token, id, title) =>
+  _json(`/ai/conversations/${id}`, { method: 'PUT', token, body: { title } })
+
+// 删除
+export const deleteConversation = (token, id) =>
+  _json(`/ai/conversations/${id}`, { method: 'DELETE', token })
+
+// 拉某个会话的历史消息 (按时间正序)
+export const getMessages = (token, id, limit = 30) =>
+  _json(`/ai/conversations/${id}/messages?limit=${limit}`, { token })

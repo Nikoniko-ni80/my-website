@@ -85,12 +85,14 @@ const startStream = () => {
   const token = localStorage.getItem('token')
   if (!token) { stopStream(); return }
   if (es) return                       // 已经连着了
-  es = new EventSource(eventStreamUrl(token))
+  es = new EventSource(eventStreamUrl(token)) 
   es.onmessage = () => {
     refresh()                                          // 红点立刻更新
     window.dispatchEvent(new Event('notify-push'))     // 消息页收到后刷新列表
   }
-  // 断线时浏览器会自动重连, 不用自己写
+  //es就是一个这样的EventSorce这样一个类，然后这样一个类就是可以接收SSE的结构体，
+  //然后他内部有一个onmessage属性，这个属性就是里面就可以写一些操作就是收到数据后执行onmessage这一部分的代码是这样子的吗
+  //断线时浏览器会自动重连, 不用自己写
 }
 
 const refresh = async () => {

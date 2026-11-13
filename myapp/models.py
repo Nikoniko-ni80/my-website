@@ -3,6 +3,7 @@
 # ============================================================
 from sqlalchemy import (Column, Integer, String, Text, ForeignKey,
                         DateTime, Boolean, UniqueConstraint, Index)
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.sql import func
 from database import Base
 
@@ -46,7 +47,10 @@ class Article(Base):
 
     id         = Column(Integer, primary_key=True)                        # 主键
     title      = Column(String(100), nullable=False)                      # 标题
-    content    = Column(Text)                                             # 内容
+    # ★ 内容用 MEDIUMTEXT 不是 TEXT:
+    #   TEXT 上限 64KB (约 2 万汉字), 长章节/长文直接存不进去;
+    #   MEDIUMTEXT 上限 16MB, 够用了。写 with_variant 是为了别的数据库不受影响。
+    content    = Column(Text().with_variant(MEDIUMTEXT(), "mysql"))        # 内容
     # ⬇ 外键: 这个 user_id 指向 users 表的 id (说明"这条笔记是哪个用户写的")
     user_id    = Column(Integer, ForeignKey("users.id"), nullable=False)
     # ⬇ 公开/私有开关: True = 公开(谁都能看), False = 私有(只有作者能看)
@@ -549,3 +553,54 @@ class BalanceLog(Base):
     # 变动之后的余额: 对账时能一眼看出从哪一步开始不对
     balance_after = Column(Integer, nullable=False)
     created_at = Column(DateTime, server_default=func.now())
+
+
+# ============================================================
+# AI 助手: 会话 + 消息 (一对多)
+# ============================================================
+# 【为什么两张表】
+#   一次会话 = 一个壳, 里面挂着一串消息。
+#   全塞一张表的话, 每条消息都要重复存"这是谁的、会话叫什么标题",
+#   改个标题得改几千行, 查"我有几个会话"得扫全表。
+#
+# 【为什么消息表里没有 user_id】
+#   消息只认会话, 用户是谁通过会话查出来。
+#   要是消息里也存一份 user_id, 两份数据就可能对不上。
+#
+# ⚠️ 安全: 查消息前必须先查会话, 确认这会话的 user_id 是当前登录的人,
+#    不能直接 WHERE conversation_id = 前端传来的数字 —— 否则改个数字就能看别人的记录。
+
+
+class AiConversation(Base):
+    """一次对话 (左边列表里的那一行)"""
+    __tablename__ = "ai_conversations"
+    __table_args__ = (
+        # 查"我的会话列表": WHERE user_id=? ORDER BY updated_at DESC
+        Index("idx_ai_conv_user_time", "user_id", "updated_at"),##(索引名，第一列，第二列)
+    )##有些东西不属于某一列，属于整张表——索引、唯一约束、字符集这些。这些就统一放进 __table_args__。
+
+    id         = Column(Integer, primary_key=True)
+    user_id    = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # 列表里显示的那句话, 一般取第一条消息的前 20 个字
+    title      = Column(String(100), default="新对话", nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+    # 最后一条消息的时间, 用来排序 (最近聊的排最上面)
+    # onupdate: 每次改这一行, 数据库自动刷新这个时间
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class AiMessage(Base):
+    """会话里的一条消息"""
+    __tablename__ = "ai_messages"
+    __table_args__ = (
+        # 查"这个会话的消息": WHERE conversation_id=? ORDER BY id
+        Index("idx_ai_msg_conv", "conversation_id", "id"),
+    )
+
+    id              = Column(Integer, primary_key=True)
+    conversation_id = Column(Integer, ForeignKey("ai_conversations.id"), nullable=False)
+    # 只允许两个值: user (我发的) / assistant (AI 回的)
+    role            = Column(String(20), nullable=False)
+    # 用 Text 不用 String: 一条回答可能好几千字
+    content         = Column(Text, nullable=False)
+    created_at      = Column(DateTime, server_default=func.now())

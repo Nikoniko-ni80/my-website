@@ -183,3 +183,14 @@ class AiChatIn(BaseModel):##一个AiChatIn包含了很多AiMessage
     """
     messages: list[AiMessage]
     max_tokens: int = 800
+
+
+# ---------- AI 多轮会话 (存库) ----------
+class AiConvIn(BaseModel):
+    """新建会话 / 改名的请求体。空字符串 = 用默认标题"""
+    title: str = ""
+
+
+class AiMsgIn(BaseModel):
+    """往会话里发一条消息。role 不让前端传 —— 永远是 user"""
+    content: str = ""
