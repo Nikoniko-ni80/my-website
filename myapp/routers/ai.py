@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from ai.agent import run_agent
 from ai.client import AIError, chat_stream
-from ai.tools import list_tool_help
+from ai.tools import list_tool_help_2
 from cache import redis_client
 from database import get_db
 from dependencies import get_current_user
@@ -52,6 +52,10 @@ BASE_PROMPT = """你是本站（技术笔记）的 AI 助手。用简洁、准�
 Thought: 你打算做什么
 Action: search_articles("关键词")
 
+需要具体内容（原文怎么写的、原理、怎么解决）时：
+Thought: 需要查文章正文
+Action: search_knowledge("用户的问题")
+
 信息已经够了、可以回答时，只输出两行：
 Thought: 信息够了
 Action: Finish[最终答案]
@@ -59,10 +63,11 @@ Action: Finish[最终答案]
 # 规则
 - 每次只输出一组 Thought/Action，不要多写
 - Action 必须写在一行内，参数用英文双引号
-- 没搜到就说没搜到，不要编造站内文章"""
+- 没搜到就说没搜到，不要编造站内文章
+- 用 search_knowledge 找到内容后，回答末尾要注明出自哪篇（写标题或 id）"""
 
 # 工具说明由 tools.py 统一提供, 加新工具时这里不用改
-SYSTEM_PROMPT = BASE_PROMPT.format(tool_help=list_tool_help())
+SYSTEM_PROMPT = BASE_PROMPT.format(tool_help=list_tool_help_2())
 
 
 def _consume_quota(user_id: int) -> bool:

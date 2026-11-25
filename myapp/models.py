@@ -604,3 +604,27 @@ class AiMessage(Base):
     # 用 Text 不用 String: 一条回答可能好几千字
     content         = Column(Text, nullable=False)
     created_at      = Column(DateTime, server_default=func.now())
+
+
+# ============================================================
+# AI 知识库: 文章切块 (RAG 的原料)
+# ============================================================
+# 【为什么要切块】
+#   一篇文章几千字, 直接塞给模型太贵也太长; 切成几百字一块,
+#   提问时只捞最相关的几块, 又准又省 token。
+#
+# 【为什么单独一张表, 不塞进 articles】
+#   一篇文章会变成很多块, 是一对多; 而且以后换切块策略,
+#   删掉重建这张表就行, 不影响原文。
+class AiChunk(Base):
+    __tablename__ = "ai_chunks"
+    __table_args__ = (
+        Index("idx_chunk_article", "article_id", "idx"),
+    )
+
+    id         = Column(Integer, primary_key=True)
+    article_id = Column(Integer, ForeignKey("articles.id"), nullable=False)
+    idx        = Column(Integer, nullable=False)   # 第几块 (0 开始)
+    title      = Column(String(120), default="", nullable=False)  # 冗余存标题, 检索时不用回表
+    content    = Column(Text().with_variant(MEDIUMTEXT(), "mysql"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())

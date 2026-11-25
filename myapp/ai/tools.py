@@ -85,3 +85,46 @@ def list_tool_help() -> str:
         "搜索本站公开文章的标题和正文, 返回标题、id 和摘要。"
         "当用户问『站里有没有关于 XX 的文章』、或者需要引用站内内容时使用。"
     )
+
+
+def search_knowledge(query: str, top_k: int = 4) -> str:
+    """在站内文章的正文里找最相关的段落, 返回原文片段 + 出处。
+
+    和 search_articles 的区别:
+      search_articles  只给标题和摘要, 适合回答"有没有这篇文章"
+      search_knowledge 给正文片段, 适合回答"文章里是怎么说的"
+    """
+    from ai.rag import search_chunks      # 放这里导入, 避免循环引用
+
+    q = (query or "").strip()
+    if not q:
+        return "错误: 查询为空, 请给一个具体问题。"
+
+    try:
+        top_k = max(1, min(int(top_k), 6))
+    except (TypeError, ValueError):
+        top_k = 4
+
+    hits = search_chunks(q, top_k=top_k)
+    if not hits:
+        return f"站内文章里没有找到和「{q}」相关的内容。"
+
+    parts = [f"从站内文章里找到 {len(hits)} 段相关内容:"]
+    for i, h in enumerate(hits, 1):
+        snippet = " ".join(h["content"].split())[:500]
+        parts.append(f"[{i}] 出自《{h['title']}》(id={h['article_id']})\n{snippet}")
+    parts.append("回答时请注明内容出自哪一篇(id)。")
+    return "\n\n".join(parts)
+
+
+TOOLS["search_knowledge"] = search_knowledge
+
+
+def list_tool_help_2() -> str:
+    """把所有工具的说明拼成一段, 给系统的 prompt 用。"""
+    return (
+        "- search_articles(keyword: str, limit: int = 5): 搜索本站公开文章, 返回标题、id 和摘要。\n"
+        "  当用户问『站里有没有关于 XX 的文章』时使用。\n"
+        "- search_knowledge(query: str, top_k: int = 4): 在文章正文里检索相关段落, 返回原文和出处。\n"
+        "  当用户问『文章里怎么说的 / 具体原理 / 怎么解决』这类需要具体内容的问题时使用。"
+    )
