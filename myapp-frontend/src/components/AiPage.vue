@@ -58,6 +58,16 @@
           :class="m.role === 'user' ? 'bubble-user' : 'bubble-ai'"
         >
           <span class="bubble-text">{{ m.content }}</span>
+          <!-- 回答里提到的站内文章, 抽出来做成可点的链接 -->
+          <div v-if="m.role === 'assistant' && sourcesOf(m.content).length" class="src-row">
+            <span class="src-label">参考：</span>
+            <router-link
+              v-for="s in sourcesOf(m.content)"
+              :key="s.id"
+              :to="`/article/${s.id}`"
+              class="src-link"
+            >《{{ s.title }}》</router-link>
+          </div>
           <span
             v-if="sending && i === messages.length - 1 && m.role === 'assistant' && !m.content"
             class="typing"
@@ -304,6 +314,22 @@ const send = async () => {
   })
 }
 
+// 从回答里抽出《标题》(id=12) 这样的出处, 做成可点链接
+const sourcesOf = (text) => {
+  if (!text) return []
+  const out = []
+  const seen = new Set()
+  const re = /《([^》]+)》\s*[（(]\s*id\s*=\s*(\d+)\s*[)）]/g
+  let m
+  while ((m = re.exec(text)) !== null) {
+    const id = Number(m[2])
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push({ id, title: m[1] })
+  }
+  return out
+}
+
 const onKeydown = (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -491,6 +517,27 @@ onUnmounted(() => {
 }
 
 .typing { color: #9aa5b1; font-size: 12px; }
+
+/* 回答底部的参考文章 */
+.src-row {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #e2e8f0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.src-label { font-size: 12px; color: #94a3b8; }
+.src-link {
+  font-size: 12px;
+  color: #0f766e;
+  background: #e6fffa;
+  border-radius: 8px;
+  padding: 2px 8px;
+  text-decoration: none;
+}
+.src-link:hover { background: #ccfbf1; }
 
 /* "正在查资料" 提示 */
 .tool-hint {
