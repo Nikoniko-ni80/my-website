@@ -16,7 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
+from ai.agent import run_agent
 from ai.client import AIError, chat_stream
+from ai.tools import list_tool_help
 from cache import redis_client
 from database import get_db
 from dependencies import get_current_user
@@ -31,10 +33,36 @@ DAILY_LIMIT = int(os.getenv("AI_DAILY_LIMIT", "100"))#从父进程搞一个信�
 
 # 系统提示词: 定义助手是谁、能干什么、有什么边界。
 # 永远由后端提供, 不接受前端传来的 system —— 否则用户能改写它的规矩。
-SYSTEM_PROMPT = """你是本站（小明的文章站）的 AI 助手。
-用简洁、准确的中文回答技术问题。
+#
+# 【为什么工具说明也写在这里】
+#   system prompt 是模型看到的第一段内容, 位置最靠前、最不容易被忽略。
+#   工具说明丢在几百字的历史消息后面, 模型经常当没看见。
+#
+# 【为什么会有一段"输出格式"】
+#   模型不按固定格式说话, 程序就没法把它"想调哪个工具"从人话里抠出来。
+#   这一步叫"结构化输出", 是 Agent 能被代码驱动的前提。
+BASE_PROMPT = """你是本站（技术笔记）的 AI 助手。用简洁、准确的中文回答技术问题。
 不确定的事情直接说不知道，不要编造。
-不要声称站内有某篇文章，除非用户消息里提供了相关上下文。"""
+
+# 你可以使用的工具
+{tool_help}
+
+# 输出格式（必须严格遵守）
+需要查资料时，只输出两行：
+Thought: 你打算做什么
+Action: search_articles("关键词")
+
+信息已经够了、可以回答时，只输出两行：
+Thought: 信息够了
+Action: Finish[最终答案]
+
+# 规则
+- 每次只输出一组 Thought/Action，不要多写
+- Action 必须写在一行内，参数用英文双引号
+- 没搜到就说没搜到，不要编造站内文章"""
+
+# 工具说明由 tools.py 统一提供, 加新工具时这里不用改
+SYSTEM_PROMPT = BASE_PROMPT.format(tool_help=list_tool_help())
 
 
 def _consume_quota(user_id: int) -> bool:
@@ -54,65 +82,71 @@ def _consume_quota(user_id: int) -> bool:
         return True
 
 
-@router.post("/ai/chat")
-async def ai_chat(payload: AiChatIn, current_user: dict = Depends(get_current_user)):
-    """收到对话 → 调模型 → 以 SSE 流返回。"""
-    if not _consume_quota(current_user["id"]):
-        return JSONResponse(
-            status_code=429,
-            content={"error": f"今天的 AI 额度（{DAILY_LIMIT} 次）用完了，明天再来"},
-        )
-
-    # 只保留最近 10 条, 且只接受 user/assistant。
-    # 前端传来的 system 一律丢弃 —— system 只能由后端定。
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    ##模型拿到的第一条永远是后端定的人设，前端传什么都影响不了它。
-    for msg in payload.messages[-10:]:##数第 10 个取到最后
-        if msg.role not in ("user", "assistant"):##只允许这两种
-            continue
-        text = msg.content.strip()##去空白
-        if not text:##如果是空消息就不发了
-            continue
-        messages.append({"role": msg.role, "content": text[:2000]})
-
-    if len(messages) == 1:##说明只有system一条，不用发
-        return JSONResponse(status_code=400, content={"error": "消息不能为空"})
-
-    # 限制单次输出, 防止一次生成几千字把费用拉高
-    max_tokens = max(1, min(payload.max_tokens, 1000))##最多1000最少1
-
-    async def event_stream():
-        try:
-            async for piece in chat_stream(messages, max_tokens=max_tokens):##开始调用写好的ai.py
-                      ##piece就是后面的chat_stream一点一点yield出来的数据
-                event = json.dumps(     ##返回的中文包成json
-                    {"type": "delta", "content": piece},
-                    ensure_ascii=False,    ##用中文形式，不用编码
-                )
-                yield f"data: {event}\n\n"    ##按照sse格式写
-
-            yield "data: [DONE]\n\n"    ##yield借书事件，前端看到DONE就停止接收
-
-        except AIError as exc:
-            # 技术细节进日志, 前端只看到人话
-            logger.error("AI 调用失败 user=%s: %s", current_user.get("id"), exc)
-            ##进日志，logger是PYthon自带日志工具
-            event = json.dumps(
-                {"type": "error", "message": "AI 暂时不可用，请稍后再试"},
-                ensure_ascii=False,
-            )
-            yield f"data: {event}\n\n"
-
-    return StreamingResponse(
-        event_stream(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",   # 告诉 nginx 别缓冲
-        },
-    )
-
-
+# ============================================================
+# 【已停用】老的流式聊天接口 POST /ai/chat
+# ============================================================
+# 这个是前端自己存数据然后一起发出去, 所以一刷新就没了。
+# 现在改用 /chat: 历史由后端查数据库, 并且会落库(用户的话 + AI 的回答)。
+# 前端已经不再调它, 先注释掉留档, 确认不要了再删。
+# @router.post("/ai/chat")
+# async def ai_chat(payload: AiChatIn, current_user: dict = Depends(get_current_user)):
+#     """收到对话 → 调模型 → 以 SSE 流返回。"""
+#     if not _consume_quota(current_user["id"]):
+#         return JSONResponse(
+#             status_code=429,
+#             content={"error": f"今天的 AI 额度（{DAILY_LIMIT} 次）用完了，明天再来"},
+#         )
+#
+#     # 只保留最近 10 条, 且只接受 user/assistant。
+#     # 前端传来的 system 一律丢弃 —— system 只能由后端定。
+#     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+#     ##模型拿到的第一条永远是后端定的人设，前端传什么都影响不了它。
+#     for msg in payload.messages[-10:]:##数第 10 个取到最后
+#         if msg.role not in ("user", "assistant"):##只允许这两种
+#             continue
+#         text = msg.content.strip()##去空白
+#         if not text:##如果是空消息就不发了
+#             continue
+#         messages.append({"role": msg.role, "content": text[:2000]})
+#
+#     if len(messages) == 1:##说明只有system一条，不用发
+#         return JSONResponse(status_code=400, content={"error": "消息不能为空"})
+#
+#     # 限制单次输出, 防止一次生成几千字把费用拉高
+#     max_tokens = max(1, min(payload.max_tokens, 1000))##最多1000最少1
+#
+#     async def event_stream():
+#         try:
+#             async for piece in chat_stream(messages, max_tokens=max_tokens):##开始调用写好的ai.py
+#                       ##piece就是后面的chat_stream一点一点yield出来的数据
+#                 event = json.dumps(     ##返回的中文包成json
+#                     {"type": "delta", "content": piece},
+#                     ensure_ascii=False,    ##用中文形式，不用编码
+#                 )
+#                 yield f"data: {event}\n\n"    ##按照sse格式写
+#
+#             yield "data: [DONE]\n\n"    ##yield借书事件，前端看到DONE就停止接收
+#
+#         except AIError as exc:
+#             # 技术细节进日志, 前端只看到人话
+#             logger.error("AI 调用失败 user=%s: %s", current_user.get("id"), exc)
+#             ##进日志，logger是PYthon自带日志工具
+#             event = json.dumps(
+#                 {"type": "error", "message": "AI 暂时不可用，请稍后再试"},
+#                 ensure_ascii=False,
+#             )
+#             yield f"data: {event}\n\n"
+#
+#     return StreamingResponse(
+#         event_stream(),
+#         media_type="text/event-stream",
+#         headers={
+#             "Cache-Control": "no-cache",
+#             "X-Accel-Buffering": "no",   # 告诉 nginx 别缓冲
+#         },
+#     )
+#
+#
 # ============================================================
 # 多轮会话 —— 存库 (Day 2)
 # ============================================================
@@ -139,7 +173,7 @@ def _own_conversation(db: Session, conversation_id: int, user_id: int) -> AiConv
     conv = db.query(AiConversation).filter(AiConversation.id == conversation_id).first()
     if conv is None or conv.user_id != user_id:
         raise HTTPException(status_code=404, detail="对话不存在")
-    return conv
+    return conv ##返回这个对话对象
 
 
 @router.post("/ai/conversations")
@@ -258,14 +292,14 @@ async def chat_in_conversation(
 
     if not _consume_quota(current_user["id"]):
         return JSONResponse(
-            status_code=429,
+            status_code=429,##403没权限 404没文件  429来的太勤了
             content={"error": f"今天的 AI 额度（{DAILY_LIMIT} 次）用完了，明天再来"},
         )
 
     # ---------- ① 先存用户的话 ----------
     is_first = db.query(AiMessage).filter(AiMessage.conversation_id == conv.id).count() == 0
     if is_first:
-        conv.title = text[:20]
+        conv.title = text[:20]##如果是第一句就用发的语句第一句选20字符当对话名字
     conv.updated_at = datetime.now()
 
     user_msg = AiMessage(conversation_id=conv.id, role="user", content=text)
@@ -286,16 +320,28 @@ async def chat_in_conversation(
     for m in rows:
         messages.append({"role": m.role, "content": m.content})
 
-    # ---------- ③ 流式调用 + 存 AI 的回答 ----------
+    # ---------- ③ 跑 agent 循环 + 存 AI 的回答 ----------
+    # 跟以前不一样: 以前只调一次模型, 现在交给 run_agent,
+    # 它会自己判断"要不要查工具、查到之后要不要再想一轮"。
     async def event_stream():
         reply_parts = []
         try:
-            async for piece in chat_stream(messages, max_tokens=800):
-                reply_parts.append(piece)
-                yield f"data: {json.dumps({'type': 'delta', 'content': piece}, ensure_ascii=False)}\n\n"
-        except AIError as exc:
-            logger.error("AI 调用失败 conv=%s: %s", conversation_id, exc)
-            yield f"data: {json.dumps({'type': 'error', 'message': 'AI 暂时不可用，请稍后再试'}, ensure_ascii=False)}\n\n"
+            async for ev in run_agent(messages):
+                etype = ev.get("type")
+
+                if etype == "delta":
+                    # 最终答案的碎片: 攒起来准备存库, 同时推给前端
+                    reply_parts.append(ev["content"])
+                    yield f"data: {json.dumps({'type': 'delta', 'content': ev['content']}, ensure_ascii=False)}\n\n"
+
+                elif etype == "tool":
+                    # 让前端能显示"正在查资料…"
+                    yield f"data: {json.dumps({'type': 'tool', 'content': ev.get('content', '')}, ensure_ascii=False)}\n\n"
+
+                elif etype == "error":
+                    yield f"data: {json.dumps({'type': 'error', 'message': ev.get('message', 'AI 暂时不可用')}, ensure_ascii=False)}\n\n"
+
+                # thinking 事件暂时不发: 前端还没做"思考中"面板
         finally:
             reply = "".join(reply_parts).strip()
             if reply:

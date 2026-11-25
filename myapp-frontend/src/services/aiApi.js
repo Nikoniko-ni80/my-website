@@ -62,7 +62,7 @@ import { API_BASE } from './authApi.js'
 // 两个对外的函数 (streamChat / streamChatInConversation) 都调它,
 // 区别只是 url 和 body 不同 —— 读流的代码只写一份
 // ============================================================
-async function _sendAndRead(url, body, token, { onDelta, onDone, onError, signal } = {}) {
+async function _sendAndRead(url, body, token, { onDelta, onDone, onError, onTool, signal } = {}) {
   let finished = false
 
   const finish = () => {    //一个变量名叫finish，下面{}是变量内部装的函数
@@ -167,6 +167,9 @@ async function _sendAndRead(url, body, token, { onDelta, onDone, onError, signal
             const event = JSON.parse(data)//把data字符串转化以后再来成内容
             if (event.type === 'delta') {
               onDelta && onDelta(event.content)//正常就把数据给前端页面
+            } else if (event.type === 'tool') {
+              // 后端正在调工具（比如查站内文章），可以先显示一句提示
+              onTool && onTool(event.content)
             } else if (event.type === 'error') {
               fail(event.message || 'AI 暂时不可用')
               return

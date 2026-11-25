@@ -65,6 +65,7 @@
         </div>
 
         <div v-if="error" class="ai-error">{{ error }}</div>
+        <div v-if="toolHint" class="tool-hint">🔧 {{ toolHint }}</div>
       </div>
 
       <div class="chat-input">
@@ -119,6 +120,7 @@ const messages = ref([])        // 当前会话的消息
 const input = ref('')
 const sending = ref(false)
 const loadingHistory = ref(false)
+const toolHint = ref('')     // 后端正在调工具时显示的一句话
 const creating = ref(false)
 const error = ref('')
 const chatArea = ref(null)
@@ -139,6 +141,7 @@ const stop = () => {
     controller = null
   }
   sending.value = false
+  toolHint.value = ''
 }
 
 // ---------- 会话列表 ----------
@@ -261,13 +264,20 @@ const send = async () => {
   await streamChatInConversation(token(), conversationId.value, text, {
     signal: controller.signal,
 
+    onTool: (hint) => {
+      toolHint.value = hint
+      scrollToBottom()
+    },
+
     onDelta: (delta) => {
+      toolHint.value = ''
       messages.value[aiIndex].content += delta
       scrollToBottom()
     },
 
     onDone: async () => {
       sending.value = false
+      toolHint.value = ''
       controller = null
       scrollToBottom()
       // 第一句会自动变成标题, 刷新一下左侧列表
@@ -276,6 +286,7 @@ const send = async () => {
 
     onError: (msg) => {
       sending.value = false
+      toolHint.value = ''
       controller = null
 
       if (!messages.value[aiIndex].content) {
@@ -480,6 +491,17 @@ onUnmounted(() => {
 }
 
 .typing { color: #9aa5b1; font-size: 12px; }
+
+/* "正在查资料" 提示 */
+.tool-hint {
+  align-self: flex-start;
+  font-size: 12px;
+  color: #0f766e;
+  background: #e6fffa;
+  border: 1px solid #b2f5ea;
+  border-radius: 10px;
+  padding: 5px 12px;
+}
 .ai-error {
   align-self: center;
   font-size: 13px;
