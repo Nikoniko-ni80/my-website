@@ -378,15 +378,17 @@ def hot_articles(
     }
 
     # ---------- ④ 现算衰减分 ----------
-    #     展示分 = 原始分 / (发布后几小时 + 2) ^ 1.5
+    #     展示分 = 原始分 / (发布后几小时 + 2) ^ 0.8
     #     "+2" 防止刚发布的文章除以 0
-    #     "1.5" 来自 Reddit / Hacker News 的公开公式
+    #     指数从 1.5 降到 0.8: Reddit 那个 1.5 是给日增百万帖的大站用的,
+    #     我们这个站一共几十篇、总阅读才几千, 用 1.5 会把老文章直接压死,
+    #     热榜变成"最新文章列表"。0.8 能让新文章仍占优, 老的爆款也能上榜。
     now = datetime.now()
     ranked = []
     for a, name in rows:##rows是319的文章表+作者名
         created = a.created_at or now
         hours = max((now - created).total_seconds() / 3600, 0)
-        shown = raw_map.get(a.id, 0) / ((hours + 2) ** 1.5)
+        shown = raw_map.get(a.id, 0) / ((hours + 2) ** 0.8)
         ranked.append((shown, a, name))
 
     # ---------- ⑤ 重排, 取前 limit ----------
